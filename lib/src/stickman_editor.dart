@@ -19,10 +19,12 @@ class _StickmanPoseEditorState extends State<StickmanPoseEditor> {
   late Map<String, StickmanNode> _nodes;
 
   // View Parameters
+  CameraView _cameraView = CameraView.free;
   double _rotationX = 0.0; // Pitch
   double _rotationY = 0.0; // Yaw (Turntable)
   double _zoom = 2.0;
   Offset _pan = Offset.zero;
+  double _cameraHeight = 0.0; // Vertical Pan
 
   // Selection State
   String? _selectedNodeId;
@@ -52,10 +54,12 @@ class _StickmanPoseEditorState extends State<StickmanPoseEditor> {
     return StickmanPainter.project(
       vec * widget.controller.scale,
       size,
+      _cameraView,
       _rotationX,
       _rotationY,
       _zoom,
-      _pan
+      _pan,
+      _cameraHeight
     );
   }
 
@@ -66,69 +70,78 @@ class _StickmanPoseEditorState extends State<StickmanPoseEditor> {
     final modelScale = widget.controller.scale;
     if (modelScale == 0) return;
 
-    // Scale Factor converting World Units to Screen Pixels
     final scaleFactor = modelScale * _zoom;
 
-    // Inverse View Rotation Matrix (Camera to World)
-    final rotMatrix = v.Matrix4.identity()
-      ..rotateX(_rotationX)
-      ..rotateY(_rotationY);
-    final invMatrix = v.Matrix4.inverted(rotMatrix);
+    // Inverse Logic depends on CameraView
+    if (_cameraView == CameraView.free) {
+      // 3D Inverse
+      final rotMatrix = v.Matrix4.identity()
+        ..rotateX(_rotationX)
+        ..rotateY(_rotationY);
+      final invMatrix = v.Matrix4.inverted(rotMatrix);
 
-    if (_axisMode == AxisMode.none) {
-      // Free Move (Screen Plane -> View Plane)
-      // Screen X -> View Right -> World Vector
-      // Screen Y -> View Up -> World Vector
-
-      final delta3 = v.Vector3(screenDelta.dx, screenDelta.dy, 0);
-      final worldDelta = invMatrix.transform3(delta3);
-
-      node.position.x += worldDelta.x / scaleFactor;
-      node.position.y += worldDelta.y / scaleFactor;
-      node.position.z += worldDelta.z / scaleFactor;
-
+      if (_axisMode == AxisMode.none) {
+        final delta3 = v.Vector3(screenDelta.dx, screenDelta.dy, 0);
+        final worldDelta = invMatrix.transform3(delta3);
+        node.position.x += worldDelta.x / scaleFactor;
+        node.position.y += worldDelta.y / scaleFactor;
+        node.position.z += worldDelta.z / scaleFactor;
+      } else {
+        _applyAxisConstrainedMove(node, screenDelta, scaleFactor, rotMatrix);
+      }
     } else {
-      // Axis Constrained Move
-      // We want to move along a specific World Axis (e.g. X: 1,0,0)
-      // We need to find how much the Screen Drag corresponds to movement along that axis.
-      // 1. Project the World Axis onto the Screen Vector.
-      // 2. Dot Product Screen Delta with Projected Axis Vector.
+      // Orthographic Inverse
+      // Map screen delta (dx, dy) to world axes directly
+      double dx = screenDelta.dx / scaleFactor;
+      double dy = screenDelta.dy / scaleFactor;
 
+      if (_axisMode == AxisMode.none) {
+        if (_cameraView == CameraView.front) {
+          // Front: Screen X=World X, Screen Y=World Y. Z unchanged.
+          node.position.x += dx;
+          node.position.y += dy;
+        } else if (_cameraView == CameraView.side) {
+          // Side: Screen X=World Z, Screen Y=World Y. X unchanged.
+          node.position.z += dx;
+          node.position.y += dy;
+        } else if (_cameraView == CameraView.top) {
+          // Top: Screen X=World X, Screen Y=World Z. Y unchanged.
+          node.position.x += dx;
+          node.position.z += dy;
+        }
+      } else {
+        // Axis Constrained in Ortho view
+        // Just mask the deltas
+        if (_cameraView == CameraView.front) {
+           if (_axisMode == AxisMode.x) node.position.x += dx;
+           if (_axisMode == AxisMode.y) node.position.y += dy;
+           // Z cannot be moved in Front view (perpendicular)
+        } else if (_cameraView == CameraView.side) {
+           if (_axisMode == AxisMode.z) node.position.z += dx;
+           if (_axisMode == AxisMode.y) node.position.y += dy;
+        } else if (_cameraView == CameraView.top) {
+           if (_axisMode == AxisMode.x) node.position.x += dx;
+           if (_axisMode == AxisMode.z) node.position.z += dy;
+        }
+      }
+    }
+  }
+
+  void _applyAxisConstrainedMove(StickmanNode node, Offset screenDelta, double scaleFactor, v.Matrix4 rotMatrix) {
       v.Vector3 axisDir;
       if (_axisMode == AxisMode.x) axisDir = v.Vector3(1, 0, 0);
       else if (_axisMode == AxisMode.y) axisDir = v.Vector3(0, 1, 0);
       else axisDir = v.Vector3(0, 0, 1);
 
-      // Transform World Axis to View Space (Camera Relative Axis)
-      // We use rotMatrix (World -> Camera)
-      // We only rotate the direction, not translate.
-      // Actually, rotMatrix is 4x4.
-      final viewAxis = rotMatrix.transform3(axisDir.clone()); // Assuming pure rotation matrix
-
-      // Now we have the axis direction in View Space (X=Right, Y=Down, Z=Depth).
-      // We project this onto the Screen Plane (X, Y).
-      // Since it's orthographic, Screen X = View X, Screen Y = View Y.
+      final viewAxis = rotMatrix.transform3(axisDir.clone());
       final screenAxisDir = Offset(viewAxis.x, viewAxis.y);
-
-      // If axis is perpendicular to screen (pointing purely in Z), magnitude is 0.
       double screenMag = screenAxisDir.distance;
-      if (screenMag < 0.001) return; // Cannot move this axis from this angle
+      if (screenMag < 0.001) return;
 
-      // Normalize Screen Axis Direction
       final screenAxisUnit = screenAxisDir / screenMag;
-
-      // Project Mouse Delta onto Screen Axis
       double projection = screenDelta.dx * screenAxisUnit.dx + screenDelta.dy * screenAxisUnit.dy;
-
-      // Calculate World Movement Amount
-      // projection (pixels) = worldMove * scaleFactor * screenMag (foreshortening)
-      // worldMove = projection / (scaleFactor * screenMag)
-
       double worldMove = projection / (scaleFactor * screenMag);
-
-      // Apply to Node
       node.position.add(axisDir * worldMove);
-    }
   }
 
   void _addNodeToSelected() {
@@ -178,18 +191,23 @@ class _StickmanPoseEditorState extends State<StickmanPoseEditor> {
               GestureDetector(
                 behavior: HitTestBehavior.opaque,
                 onPanUpdate: (details) {
-                   setState(() {
-                      _rotationY -= details.delta.dx * 0.01;
-                      _rotationX += details.delta.dy * 0.01;
-                   });
+                   // Only rotate if Free mode
+                   if (_cameraView == CameraView.free) {
+                     setState(() {
+                        _rotationY -= details.delta.dx * 0.01;
+                        _rotationX += details.delta.dy * 0.01;
+                     });
+                   }
                 },
                 child: CustomPaint(
                    painter: StickmanPainter(
                      controller: widget.controller,
+                     cameraView: _cameraView,
                      viewRotationX: _rotationX,
                      viewRotationY: _rotationY,
                      viewZoom: _zoom,
                      viewPan: _pan,
+                     cameraHeightOffset: _cameraHeight,
                      color: Colors.white,
                      selectedNodeId: _selectedNodeId,
                      axisMode: _axisMode,
@@ -198,26 +216,7 @@ class _StickmanPoseEditorState extends State<StickmanPoseEditor> {
                 ),
               ),
 
-              // Zoom Slider
-              Positioned(
-                left: 20,
-                bottom: 150,
-                child: RotatedBox(
-                  quarterTurns: 3,
-                  child: SizedBox(
-                    width: 200,
-                    child: Slider(
-                      value: _zoom,
-                      min: 0.5,
-                      max: 5.0,
-                      onChanged: (v) => setState(() => _zoom = v),
-                      label: "Zoom",
-                    ),
-                  ),
-                ),
-              ),
-
-              // Layer 2: Handles
+              // Handles (Same logic, mapped via _toScreen)
               ..._nodes.values.map((node) {
                 final screenPos = _toScreen(node.position, size);
                 final isSelected = node.id == _selectedNodeId;
@@ -257,79 +256,168 @@ class _StickmanPoseEditorState extends State<StickmanPoseEditor> {
                 );
               }).toList(),
 
-              // Layer 3: UI Controls
-              Align(
-                alignment: Alignment.bottomRight,
-                child: SafeArea(
-                  child: Padding(
-                    padding: const EdgeInsets.all(20),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      crossAxisAlignment: CrossAxisAlignment.end,
-                      children: [
-                        // Axis Controls
-                        Container(
-                          decoration: BoxDecoration(
+              // UI OVERLAYS
+              SafeArea(
+                child: Stack(
+                  children: [
+                    // Group B: Camera Views (Top Left)
+                    Positioned(
+                      top: 10,
+                      left: 10,
+                      child: Container(
+                         padding: const EdgeInsets.all(4),
+                         decoration: BoxDecoration(
                             color: Colors.black54,
                             borderRadius: BorderRadius.circular(8),
-                          ),
-                          child: ToggleButtons(
-                            isSelected: [
-                              _axisMode == AxisMode.none,
-                              _axisMode == AxisMode.x,
-                              _axisMode == AxisMode.y,
-                              _axisMode == AxisMode.z,
-                            ],
-                            onPressed: (index) {
-                              setState(() {
-                                if (index == 0) _axisMode = AxisMode.none;
-                                else if (index == 1) _axisMode = AxisMode.x;
-                                else if (index == 2) _axisMode = AxisMode.y;
-                                else if (index == 3) _axisMode = AxisMode.z;
-                              });
-                            },
-                            color: Colors.white,
-                            selectedColor: Colors.amber,
-                            fillColor: Colors.white24,
-                            children: const [
-                              Padding(padding: EdgeInsets.symmetric(horizontal: 12), child: Text("Free")),
-                              Padding(padding: EdgeInsets.symmetric(horizontal: 12), child: Text("X", style: TextStyle(color: Colors.red))),
-                              Padding(padding: EdgeInsets.symmetric(horizontal: 12), child: Text("Y", style: TextStyle(color: Colors.green))),
-                              Padding(padding: EdgeInsets.symmetric(horizontal: 12), child: Text("Z", style: TextStyle(color: Colors.blue))),
-                            ],
-                          ),
-                        ),
-                        const SizedBox(height: 16),
-
-                         if (_selectedNodeId != null) ...[
-                            FloatingActionButton.small(
-                              onPressed: _addNodeToSelected,
-                              child: const Icon(Icons.add),
-                              tooltip: "Add Child Node",
-                            ),
-                            const SizedBox(height: 8),
-                            if (_selectedNodeId != 'hip')
-                            FloatingActionButton.small(
-                              onPressed: _removeSelectedNode,
-                              backgroundColor: Colors.red,
-                              child: const Icon(Icons.delete),
-                              tooltip: "Remove Node",
-                            ),
-                            const SizedBox(height: 16),
-                         ],
-                         ElevatedButton(
-                          onPressed: _copyPoseToClipboard,
-                          child: const Text("Copy Pose"),
-                        ),
-                      ],
+                         ),
+                         child: Column(
+                           children: [
+                             _viewButton("View X", CameraView.side),
+                             _viewButton("View Y", CameraView.top),
+                             _viewButton("View Z", CameraView.front),
+                             _viewButton("Free", CameraView.free),
+                           ],
+                         ),
+                      ),
                     ),
-                  ),
+
+                    // Group A: Drag Constraints (Top Right)
+                    Positioned(
+                      top: 10,
+                      right: 10,
+                      child: Container(
+                         padding: const EdgeInsets.all(4),
+                         decoration: BoxDecoration(
+                            color: Colors.black54,
+                            borderRadius: BorderRadius.circular(8),
+                         ),
+                         child: Column(
+                           children: [
+                             _axisButton("Free", AxisMode.none),
+                             _axisButton("X", AxisMode.x, Colors.red),
+                             _axisButton("Y", AxisMode.y, Colors.green),
+                             _axisButton("Z", AxisMode.z, Colors.blue),
+                           ],
+                         ),
+                      ),
+                    ),
+
+                    // Group C: Camera Height (Left Edge Vertical Slider)
+                    Positioned(
+                      left: 10,
+                      top: 200,
+                      bottom: 100,
+                      child: RotatedBox(
+                        quarterTurns: 3,
+                        child: SizedBox(
+                          width: 300,
+                          child: Slider(
+                            value: _cameraHeight,
+                            min: -200,
+                            max: 200,
+                            onChanged: (v) => setState(() => _cameraHeight = v),
+                            label: "Height",
+                          ),
+                        ),
+                      ),
+                    ),
+
+                    // Zoom Slider (Bottom Left)
+                    Positioned(
+                      left: 50,
+                      bottom: 20,
+                      child: SizedBox(
+                        width: 200,
+                        child: Slider(
+                          value: _zoom,
+                          min: 0.5,
+                          max: 5.0,
+                          onChanged: (v) => setState(() => _zoom = v),
+                          label: "Zoom",
+                        ),
+                      ),
+                    ),
+
+                    // Node Operations (Bottom Right)
+                    Positioned(
+                      bottom: 20,
+                      right: 20,
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: [
+                           if (_selectedNodeId != null) ...[
+                              FloatingActionButton.small(
+                                heroTag: "add",
+                                onPressed: _addNodeToSelected,
+                                child: const Icon(Icons.add),
+                                tooltip: "Add Child Node",
+                              ),
+                              const SizedBox(height: 8),
+                              if (_selectedNodeId != 'hip')
+                              FloatingActionButton.small(
+                                heroTag: "del",
+                                onPressed: _removeSelectedNode,
+                                backgroundColor: Colors.red,
+                                child: const Icon(Icons.delete),
+                                tooltip: "Remove Node",
+                              ),
+                              const SizedBox(height: 16),
+                           ],
+                           ElevatedButton(
+                            onPressed: _copyPoseToClipboard,
+                            child: const Text("Copy Pose"),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
                 ),
               ),
             ],
           ),
         );
       },
+    );
+  }
+
+  Widget _viewButton(String label, CameraView view) {
+    bool selected = _cameraView == view;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 2),
+      child: InkWell(
+        onTap: () => setState(() => _cameraView = view),
+        child: Container(
+          width: 50,
+          padding: const EdgeInsets.symmetric(vertical: 6),
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: selected ? Colors.blueAccent : Colors.transparent,
+            borderRadius: BorderRadius.circular(4),
+          ),
+          child: Text(label, style: const TextStyle(color: Colors.white, fontSize: 10)),
+        ),
+      ),
+    );
+  }
+
+  Widget _axisButton(String label, AxisMode mode, [Color color = Colors.white]) {
+    bool selected = _axisMode == mode;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 2),
+      child: InkWell(
+        onTap: () => setState(() => _axisMode = mode),
+        child: Container(
+          width: 40,
+          padding: const EdgeInsets.symmetric(vertical: 6),
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: selected ? Colors.amber : Colors.transparent,
+            borderRadius: BorderRadius.circular(4),
+          ),
+          child: Text(label, style: TextStyle(color: selected ? Colors.black : color, fontSize: 12, fontWeight: FontWeight.bold)),
+        ),
+      ),
     );
   }
 

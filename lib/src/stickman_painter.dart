@@ -7,16 +7,21 @@ import 'stickman_animator.dart';
 // Axis Mode Enum (Used in Editor too)
 enum AxisMode { none, x, y, z }
 
+// Camera View Enum
+enum CameraView { front, side, top, free }
+
 /// 3. THE PAINTER: Pure Flutter Rendering (No Flame logic here)
 class StickmanPainter extends CustomPainter {
   final StickmanController controller;
   final Color color;
 
   // View Parameters
-  final double viewRotationX; // Pitch
-  final double viewRotationY; // Yaw
+  final CameraView cameraView;
+  final double viewRotationX; // Pitch (only used in Free mode)
+  final double viewRotationY; // Yaw (only used in Free mode)
   final double viewZoom;
   final Offset viewPan;
+  final double cameraHeightOffset;
 
   // Editor State
   final String? selectedNodeId;
@@ -25,40 +30,71 @@ class StickmanPainter extends CustomPainter {
   StickmanPainter({
     required this.controller,
     this.color = Colors.white,
+    this.cameraView = CameraView.free,
     this.viewRotationX = 0.0,
     this.viewRotationY = 0.0,
     this.viewZoom = 1.0,
     this.viewPan = Offset.zero,
+    this.cameraHeightOffset = 0.0,
     this.selectedNodeId,
     this.axisMode = AxisMode.none,
   });
 
   // Public helper so Editor can use exact same projection
-  // Applies Rotation -> Scale -> Pan -> Center Offset
   static Offset project(
       v.Vector3 point,
       Size size,
+      CameraView view,
       double rotX,
       double rotY,
       double zoom,
-      Offset pan)
+      Offset pan,
+      double heightOffset)
   {
-    // 1. Rotation (Orbit around 0,0,0)
-    // Rotate Y (Yaw)
-    double x1 = point.x * cos(rotY) - point.z * sin(rotY);
-    double z1 = point.x * sin(rotY) + point.z * cos(rotY);
-    double y1 = point.y;
+    double x = 0;
+    double y = 0;
 
-    // Rotate X (Pitch)
-    double y2 = y1 * cos(rotX) - z1 * sin(rotX);
-    double z2 = y1 * sin(rotX) + z1 * cos(rotX);
-    double x2 = x1;
+    switch (view) {
+      case CameraView.front: // Z-Axis: Project (x, y). Ignore z.
+        x = point.x;
+        y = point.y;
+        break;
+      case CameraView.side: // X-Axis: Project (z, y). Ignore x.
+        x = point.z;
+        y = point.y;
+        break;
+      case CameraView.top: // Y-Axis: Project (x, z). Ignore y.
+        x = point.x;
+        y = point.z;
+        break;
+      case CameraView.free: // Perspective/Free: 3D Rotation
+        // Rotate Y (Yaw)
+        double x1 = point.x * cos(rotY) - point.z * sin(rotY);
+        double z1 = point.x * sin(rotY) + point.z * cos(rotY);
+        double y1 = point.y;
+        // Rotate X (Pitch)
+        double y2 = y1 * cos(rotX) - z1 * sin(rotX);
+        double z2 = y1 * sin(rotX) + z1 * cos(rotX);
+        double x2 = x1;
 
-    // 2. Scale (Zoom) + Model Scale
-    double sx = x2 * zoom;
-    double sy = y2 * zoom;
+        x = x2;
+        y = y2;
+        break;
+    }
 
-    // 3. Center and Pan
+    // Apply Zoom
+    double sx = x * zoom;
+    double sy = y * zoom;
+
+    // Apply Camera Height Offset (Vertical Pan)
+    // "vertically translate the entire stickman rendering... moving the 'camera' up/down"
+    // Moving camera UP means stickman moves DOWN. So we subtract offset?
+    // Or just add it to Y? Usually offset implies shift. Let's add it to the center or the y coord.
+    // If we move camera up (+Y), object appears lower (-Y).
+    // Let's assume heightOffset is a translation of the object.
+    sy += heightOffset;
+
+    // Center and Pan
     double cx = size.width / 2;
     double cy = size.height / 2;
 
@@ -76,17 +112,19 @@ class StickmanPainter extends CustomPainter {
 
     final fillPaint = Paint()..color = color ..style = PaintingStyle.fill;
 
-    // Draw Ground Grid
+    // Draw Grid
     _drawGrid(canvas, size);
 
     // 3D Projection Helper instance
     Offset toScreen(v.Vector3 vec) => project(
       vec * controller.scale,
       size,
+      cameraView,
       viewRotationX,
       viewRotationY,
       viewZoom,
-      viewPan
+      viewPan,
+      cameraHeightOffset
     );
 
     // Recursive Drawing
@@ -108,16 +146,13 @@ class StickmanPainter extends CustomPainter {
     // Draw Bones
     drawNode(skel.root);
 
-    // Legacy Support: Only if head node doesn't exist?
-    // StickmanSkeleton now creates head node.
-    // If we loaded old JSON, it might not have 'head'.
-    // If 'head' is missing, draw legacy neck circle.
+    // Legacy Support
     if (!skel.nodes.containsKey('head') && skel.nodes.containsKey('neck')) {
       Offset headCenter = toScreen(skel.neck + v.Vector3(0, -8, 0));
       canvas.drawCircle(headCenter, 6 * viewZoom * controller.scale, fillPaint);
     }
 
-    // Draw Axis Constraints (Dotted Line)
+    // Draw Axis Constraints
     if (selectedNodeId != null && axisMode != AxisMode.none) {
       final node = skel.nodes[selectedNodeId];
       if (node != null) {
@@ -131,7 +166,6 @@ class StickmanPainter extends CustomPainter {
        ..style = PaintingStyle.stroke
        ..strokeWidth = 2.0;
 
-     // Color convention: X=Red, Y=Green, Z=Blue
      v.Vector3 axisDir;
      if (mode == AxisMode.x) {
        p.color = Colors.red;
@@ -144,7 +178,6 @@ class StickmanPainter extends CustomPainter {
        axisDir = v.Vector3(0, 0, 1);
      }
 
-     // Draw a long line through 'pos' along 'axisDir'
      final length = 1000.0;
      final start3D = pos - axisDir * length;
      final end3D = pos + axisDir * length;
@@ -162,7 +195,6 @@ class StickmanPainter extends CustomPainter {
     double dx = (p2.dx - p1.dx) / distance;
     double dy = (p2.dy - p1.dy) / distance;
 
-    // Don't draw if distance is zero (axis perpendicular to view)
     if (distance == 0) return;
 
     double currentX = p1.dx;
@@ -191,28 +223,53 @@ class StickmanPainter extends CustomPainter {
     const double range = 100.0;
     const double stepSize = range * 2 / steps;
 
-    Offset p(double x, double z) => project(
-      v.Vector3(x, 25, z) * controller.scale,
+    // Helper to project a generic 3D point
+    Offset p3(double x, double y, double z) => project(
+      v.Vector3(x, y, z) * controller.scale,
       size,
+      cameraView,
       viewRotationX,
       viewRotationY,
       viewZoom,
-      viewPan
+      viewPan,
+      cameraHeightOffset
     );
+
+    // Draw Grid based on active plane
+    // Front View (Z-Axis): Project (x, y). Plane is XY. Z is depth.
+    // Side View (X-Axis): Project (z, y). Plane is ZY. X is depth.
+    // Top View (Y-Axis): Project (x, z). Plane is XZ. Y is depth.
+    // Free: Ground Plane (XZ).
 
     for (int i = 0; i <= steps; i++) {
       double v = -range + i * stepSize;
-      canvas.drawLine(p(-range, v), p(range, v), gridPaint);
-      canvas.drawLine(p(v, -range), p(v, range), gridPaint);
+
+      if (cameraView == CameraView.front) {
+         // Grid on XY plane?
+         // Stickman uses Y=0 (hip) to Y=25 (feet).
+         // So XY grid at Z=0?
+         canvas.drawLine(p3(-range, v, 0), p3(range, v, 0), gridPaint); // Horizontal
+         canvas.drawLine(p3(v, -range, 0), p3(v, range, 0), gridPaint); // Vertical
+      } else if (cameraView == CameraView.side) {
+         // Grid on ZY plane at X=0
+         canvas.drawLine(p3(0, v, -range), p3(0, v, range), gridPaint);
+         canvas.drawLine(p3(0, -range, v), p3(0, range, v), gridPaint);
+      } else if (cameraView == CameraView.top || cameraView == CameraView.free) {
+         // Grid on XZ plane (Ground) at Y=25 (Feet level)
+         canvas.drawLine(p3(-range, 25, v), p3(range, 25, v), gridPaint);
+         canvas.drawLine(p3(v, 25, -range), p3(v, 25, range), gridPaint);
+      }
     }
   }
 
   @override
   bool shouldRepaint(covariant StickmanPainter oldDelegate) {
-    return oldDelegate.viewRotationX != viewRotationX ||
+    return oldDelegate.cameraView != cameraView ||
+           oldDelegate.viewRotationX != viewRotationX ||
            oldDelegate.viewRotationY != viewRotationY ||
            oldDelegate.viewZoom != viewZoom ||
            oldDelegate.viewPan != viewPan ||
+           oldDelegate.cameraHeightOffset != cameraHeightOffset ||
            oldDelegate.controller != controller ||
            oldDelegate.selectedNodeId != selectedNodeId ||
            oldDelegate.axisMode != axisMode;
