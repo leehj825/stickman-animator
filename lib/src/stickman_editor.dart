@@ -4,6 +4,7 @@ import 'package:vector_math/vector_math_64.dart' as v;
 import 'stickman_skeleton.dart';
 import 'stickman_animator.dart';
 import 'stickman_painter.dart';
+import 'stickman_exporter.dart';
 
 class StickmanPoseEditor extends StatefulWidget {
   final StickmanController controller;
@@ -277,17 +278,19 @@ class _StickmanPoseEditorState extends State<StickmanPoseEditor> {
                     Positioned(
                       left: 10,
                       top: 200,
-                      bottom: 150,
-                      child: RotatedBox(
-                        quarterTurns: 3,
-                        child: SizedBox(
-                          width: 200,
-                          child: Slider(
-                            value: _cameraHeight,
-                            min: -200,
-                            max: 200,
-                            onChanged: (v) => setState(() => _cameraHeight = v),
-                            label: "Height",
+                      bottom: 200, // Constrain height
+                      child: Center(
+                        child: RotatedBox(
+                          quarterTurns: 3,
+                          child: SizedBox(
+                            width: 200, // Fixed visual length
+                            child: Slider(
+                              value: _cameraHeight,
+                              min: -200,
+                              max: 200,
+                              onChanged: (v) => setState(() => _cameraHeight = v),
+                              label: "Height",
+                            ),
                           ),
                         ),
                       ),
@@ -297,16 +300,18 @@ class _StickmanPoseEditorState extends State<StickmanPoseEditor> {
                     Positioned(
                       right: 10,
                       top: 200,
-                      bottom: 150,
+                      bottom: 200, // Constrain height
                       child: Row(
                         children: [
                           Column(
                             mainAxisAlignment: MainAxisAlignment.center,
                             children: [
                               Text("line", style: styleLabel),
-                              Expanded(
-                                child: RotatedBox(
-                                  quarterTurns: 3,
+                              SizedBox(height: 8),
+                              RotatedBox(
+                                quarterTurns: 3,
+                                child: SizedBox(
+                                  width: 200, // Fixed visual length
                                   child: Slider(
                                     value: widget.controller.skeleton.strokeWidth,
                                     min: 1.0,
@@ -321,9 +326,11 @@ class _StickmanPoseEditorState extends State<StickmanPoseEditor> {
                             mainAxisAlignment: MainAxisAlignment.center,
                             children: [
                               Text("head", style: styleLabel),
-                              Expanded(
-                                child: RotatedBox(
-                                  quarterTurns: 3,
+                              SizedBox(height: 8),
+                              RotatedBox(
+                                quarterTurns: 3,
+                                child: SizedBox(
+                                  width: 200, // Fixed visual length
                                   child: Slider(
                                     value: widget.controller.skeleton.headRadius,
                                     min: 2.0,
@@ -342,9 +349,19 @@ class _StickmanPoseEditorState extends State<StickmanPoseEditor> {
                     Positioned(
                       bottom: 20,
                       right: 20,
-                      child: ElevatedButton(
-                        onPressed: _copyPoseToClipboard,
-                        child: const Text("Copy Pose"),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          ElevatedButton(
+                            onPressed: _copyPoseToClipboard,
+                            child: const Text("Copy"),
+                          ),
+                          const SizedBox(width: 8),
+                          ElevatedButton(
+                            onPressed: _exportObjToClipboard,
+                            child: const Text("OBJ"),
+                          ),
+                        ],
                       ),
                     ),
 
@@ -434,7 +451,15 @@ class _StickmanPoseEditorState extends State<StickmanPoseEditor> {
 
     Clipboard.setData(ClipboardData(text: buffer.toString()));
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text("Pose & JSON copied to clipboard!")),
+      const SnackBar(content: Text("Dart Code copied!")),
+    );
+  }
+
+  void _exportObjToClipboard() {
+    final obj = StickmanExporter.generateObjString(widget.controller.skeleton);
+    Clipboard.setData(ClipboardData(text: obj));
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text("OBJ Geometry copied! Save as .obj for Blender.")),
     );
   }
 }
