@@ -5,10 +5,116 @@ import 'stickman_skeleton.dart';
 enum WeaponType { none, sword, axe, bow }
 enum StickmanState { animating, ragdoll }
 
+/// Interface for movement strategies
+abstract class MotionStrategy {
+  void update(double dt, StickmanController controller);
+}
+
+/// A strategy that does nothing, allowing manual manipulation of the skeleton.
+class ManualMotionStrategy implements MotionStrategy {
+  @override
+  void update(double dt, StickmanController controller) {
+    // No-op: The skeleton is updated manually (e.g. by the Editor)
+  }
+}
+
+/// The existing procedural sine-wave/running logic
+class ProceduralMotionStrategy implements MotionStrategy {
+  @override
+  void update(double dt, StickmanController controller) {
+    // --- Local Space Calculation ---
+    // 1. Spine & Breathing
+    controller.skeleton.hip.setValues(0, 0, 0);
+    double breath = sin(controller.time * 0.5) * 1.0;
+    double bounce = breath * (1 - controller.runWeight) + (sin(controller.time)).abs() * 3.0 * controller.runWeight;
+    controller.skeleton.neck.setValues(0, -25 + bounce, 0);
+
+    // 2. Shoulders & Hips (Relative to body)
+    controller.skeleton.lShoulder = controller.skeleton.neck.clone();
+    controller.skeleton.rShoulder = controller.skeleton.neck.clone();
+    controller.skeleton.lHip = controller.skeleton.hip.clone();
+    controller.skeleton.rHip = controller.skeleton.hip.clone();
+
+    // 3. Limbs (Run Cycle)
+    double legSwing = sin(controller.time) * 0.8 * controller.runWeight;
+    double armSwing = cos(controller.time) * 0.8 * controller.runWeight;
+
+    // Helper to rotate local points
+    v.Vector3 rotateX(v.Vector3 point, double angle) {
+      final rot = v.Matrix3.rotationX(angle);
+      return rot.transform(point);
+    }
+
+    // Legs
+    controller.skeleton.lKnee = rotateX(v.Vector3(-3, 12, 0), legSwing) + controller.skeleton.lHip;
+    controller.skeleton.rKnee = rotateX(v.Vector3(3, 12, 0), -legSwing) + controller.skeleton.rHip;
+    controller.skeleton.lFoot = rotateX(v.Vector3(-3, 12, 0), legSwing + 0.2) + controller.skeleton.lKnee;
+    controller.skeleton.rFoot = rotateX(v.Vector3(3, 12, 0), -legSwing + 0.2) + controller.skeleton.rKnee;
+
+    // Arms
+    double lArmAngle = -armSwing;
+    double rArmAngle = armSwing;
+
+    // Weapon logic override
+    if (controller.isAttacking) {
+      rArmAngle = -1.5;
+    } else if (controller.weaponType == WeaponType.bow) {
+      lArmAngle = -1.5;
+      rArmAngle = -1.5;
+    } else if (controller.weaponType != WeaponType.none) {
+      rArmAngle = -0.5;
+    }
+
+    controller.skeleton.lElbow = rotateX(v.Vector3(-6, 10, 0), lArmAngle) + controller.skeleton.lShoulder;
+    controller.skeleton.rElbow = rotateX(v.Vector3(6, 10, 0), rArmAngle) + controller.skeleton.rShoulder;
+
+    controller.skeleton.lHand = rotateX(v.Vector3(0, 10, 0), lArmAngle - 0.3) + controller.skeleton.lElbow;
+    controller.skeleton.rHand = rotateX(v.Vector3(0, 10, 0), rArmAngle - 0.3) + controller.skeleton.rElbow;
+
+    // Attack Punch Lunge
+    if (controller.isAttacking) {
+       double progress = sin((controller.attackTimer / 0.3) * pi);
+       controller.skeleton.rHand.z += progress * 15;
+       controller.skeleton.rHand.y -= progress * 5;
+    }
+
+    // --- Global Rotation (Y-Axis) ---
+    final rotY = v.Matrix3.rotationY(controller.facingAngle);
+    // Apply to all points
+    List<v.Vector3> points = [
+      controller.skeleton.hip, controller.skeleton.neck, controller.skeleton.lShoulder, controller.skeleton.rShoulder,
+      controller.skeleton.lHip, controller.skeleton.rHip, controller.skeleton.lKnee, controller.skeleton.rKnee,
+      controller.skeleton.lFoot, controller.skeleton.rFoot, controller.skeleton.lElbow, controller.skeleton.rElbow,
+      controller.skeleton.lHand, controller.skeleton.rHand
+    ];
+
+    for (var p in points) {
+      p.setFrom(rotY.transform(p));
+    }
+  }
+}
+
+/// Interpolates the skeleton toward a target pose
+class PoseMotionStrategy implements MotionStrategy {
+  final StickmanSkeleton targetPose;
+
+  PoseMotionStrategy(this.targetPose);
+
+  @override
+  void update(double dt, StickmanController controller) {
+    // Interpolate towards the target pose
+    double t = (dt * 5.0).clamp(0.0, 1.0);
+    controller.skeleton.lerp(targetPose, t);
+  }
+}
+
+
 /// 2. THE ANIMATOR: Calculates where the bones should be
 class StickmanController {
   final StickmanSkeleton skeleton = StickmanSkeleton();
   StickmanState state = StickmanState.animating;
+
+  late MotionStrategy _activeStrategy;
 
   // Configuration
   WeaponType weaponType;
@@ -26,9 +132,19 @@ class StickmanController {
   // Physics State
   _RagdollPhysics? _ragdoll;
 
-  StickmanController({this.scale = 1.0, this.weaponType = WeaponType.none});
+  StickmanController({this.scale = 1.0, this.weaponType = WeaponType.none}) {
+    _activeStrategy = ProceduralMotionStrategy();
+  }
 
+  // Getters for Strategy to access private fields if they were private
+  double get time => _time;
+  double get runWeight => _runWeight;
   double get facingAngle => _facingAngle;
+  double get attackTimer => _attackTimer;
+
+  void setStrategy(MotionStrategy strategy) {
+    _activeStrategy = strategy;
+  }
 
   void die() {
     if (state == StickmanState.ragdoll) return;
@@ -83,80 +199,7 @@ class StickmanController {
       }
     }
 
-    _solveProceduralAnimation();
-  }
-
-  // Procedural Animation Solver (The "Math" part of your original render method)
-  void _solveProceduralAnimation() {
-    // --- Local Space Calculation ---
-    // 1. Spine & Breathing
-    skeleton.hip.setValues(0, 0, 0);
-    double breath = sin(_time * 0.5) * 1.0;
-    double bounce = breath * (1 - _runWeight) + (sin(_time)).abs() * 3.0 * _runWeight;
-    skeleton.neck.setValues(0, -25 + bounce, 0);
-
-    // 2. Shoulders & Hips (Relative to body)
-    skeleton.lShoulder = skeleton.neck.clone();
-    skeleton.rShoulder = skeleton.neck.clone();
-    skeleton.lHip = skeleton.hip.clone();
-    skeleton.rHip = skeleton.hip.clone();
-
-    // 3. Limbs (Run Cycle)
-    double legSwing = sin(_time) * 0.8 * _runWeight;
-    double armSwing = cos(_time) * 0.8 * _runWeight;
-
-    // Helper to rotate local points
-    v.Vector3 rotateX(v.Vector3 point, double angle) {
-      final rot = v.Matrix3.rotationX(angle);
-      return rot.transform(point);
-    }
-
-    // Legs
-    skeleton.lKnee = rotateX(v.Vector3(-3, 12, 0), legSwing) + skeleton.lHip;
-    skeleton.rKnee = rotateX(v.Vector3(3, 12, 0), -legSwing) + skeleton.rHip;
-    skeleton.lFoot = rotateX(v.Vector3(-3, 12, 0), legSwing + 0.2) + skeleton.lKnee;
-    skeleton.rFoot = rotateX(v.Vector3(3, 12, 0), -legSwing + 0.2) + skeleton.rKnee;
-
-    // Arms
-    double lArmAngle = -armSwing;
-    double rArmAngle = armSwing;
-
-    // Weapon logic override
-    if (isAttacking) {
-      rArmAngle = -1.5;
-    } else if (weaponType == WeaponType.bow) {
-      lArmAngle = -1.5;
-      rArmAngle = -1.5;
-    } else if (weaponType != WeaponType.none) {
-      rArmAngle = -0.5;
-    }
-
-    skeleton.lElbow = rotateX(v.Vector3(-6, 10, 0), lArmAngle) + skeleton.lShoulder;
-    skeleton.rElbow = rotateX(v.Vector3(6, 10, 0), rArmAngle) + skeleton.rShoulder;
-
-    skeleton.lHand = rotateX(v.Vector3(0, 10, 0), lArmAngle - 0.3) + skeleton.lElbow;
-    skeleton.rHand = rotateX(v.Vector3(0, 10, 0), rArmAngle - 0.3) + skeleton.rElbow;
-
-    // Attack Punch Lunge
-    if (isAttacking) {
-       double progress = sin((_attackTimer / 0.3) * pi);
-       skeleton.rHand.z += progress * 15;
-       skeleton.rHand.y -= progress * 5;
-    }
-
-    // --- Global Rotation (Y-Axis) ---
-    final rotY = v.Matrix3.rotationY(_facingAngle);
-    // Apply to all points
-    List<v.Vector3> points = [
-      skeleton.hip, skeleton.neck, skeleton.lShoulder, skeleton.rShoulder,
-      skeleton.lHip, skeleton.rHip, skeleton.lKnee, skeleton.rKnee,
-      skeleton.lFoot, skeleton.rFoot, skeleton.lElbow, skeleton.rElbow,
-      skeleton.lHand, skeleton.rHand
-    ];
-
-    for (var p in points) {
-      p.setFrom(rotY.transform(p));
-    }
+    _activeStrategy.update(dt, this);
   }
 }
 

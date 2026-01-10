@@ -17,19 +17,19 @@ class MyApp extends StatelessWidget {
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
         useMaterial3: true,
       ),
-      home: const StickmanDemo(),
+      home: const StickmanEditorPage(),
     );
   }
 }
 
-class StickmanDemo extends StatefulWidget {
-  const StickmanDemo({super.key});
+class StickmanEditorPage extends StatefulWidget {
+  const StickmanEditorPage({super.key});
 
   @override
-  State<StickmanDemo> createState() => _StickmanDemoState();
+  State<StickmanEditorPage> createState() => _StickmanEditorPageState();
 }
 
-class _StickmanDemoState extends State<StickmanDemo>
+class _StickmanEditorPageState extends State<StickmanEditorPage>
     with SingleTickerProviderStateMixin {
   late StickmanController _controller;
   late Ticker _ticker;
@@ -38,7 +38,12 @@ class _StickmanDemoState extends State<StickmanDemo>
   @override
   void initState() {
     super.initState();
-    _controller = StickmanController();
+    _controller = StickmanController(scale: 1.0);
+    // Start with PoseMotionStrategy (editor friendly)
+    // Wait, the editor sets this itself in initState.
+    // But we need to pump updates for `lerp` to work if we were using it.
+    // The editor uses Drag to update positions directly.
+
     _ticker = createTicker(_onTick)..start();
   }
 
@@ -47,8 +52,8 @@ class _StickmanDemoState extends State<StickmanDemo>
     final double dt = currentTime - _lastTime;
     _lastTime = currentTime;
 
-    // Simulate some movement
     setState(() {
+      // We still call update so any physics/interpolation runs
       _controller.update(dt, 0.0, 0.0);
     });
   }
@@ -63,25 +68,9 @@ class _StickmanDemoState extends State<StickmanDemo>
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Stickman 3D Demo'),
-        backgroundColor: Theme.of(context).colorScheme.inversePrimary,
+        title: const Text('Stickman Editor'),
       ),
-      body: Center(
-        child: CustomPaint(
-          painter: StickmanPainter(controller: _controller),
-          size: const Size(300, 300),
-        ),
-      ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: () {
-            if (_controller.state == StickmanState.ragdoll) {
-                _controller.respawn();
-            } else {
-                _controller.die();
-            }
-        },
-        child: const Icon(Icons.refresh),
-      ),
+      body: StickmanPoseEditor(controller: _controller),
     );
   }
 }
