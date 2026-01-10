@@ -45,7 +45,7 @@ class StickmanSkeleton {
 
   // Visual Properties
   double headRadius = 6.0;
-  double strokeWidth = 3.0;
+  double strokeWidth = 4.6;
 
   // Cache for fast access to standard bones
   // Map ID -> Node
@@ -53,46 +53,44 @@ class StickmanSkeleton {
 
   StickmanSkeleton() {
     // Build Default Hierarchy
-    // Hip is root. Positioned at origin (center).
-    root = StickmanNode('hip', v.Vector3(0, 0, 0));
+    // Hip is root
+    root = StickmanNode('hip', v.Vector3(1.0, 0.0, 0.0));
 
-    // Upper Body
-    final neck = StickmanNode('neck', v.Vector3(0, -15, 0));
+    final neck = StickmanNode('neck', v.Vector3(0.0, -14.7, 0.0));
     root.children.add(neck);
 
     // Head as child of Neck
-    final head = StickmanNode('head', v.Vector3(0, -22, 0));
+    final head = StickmanNode('head', v.Vector3(0.0, -22.0, 0.0));
     neck.children.add(head);
 
-    final lShoulder = StickmanNode('lShoulder', v.Vector3(-5, -15, 0));
-    final rShoulder = StickmanNode('rShoulder', v.Vector3(5, -15, 0));
+    final lShoulder = StickmanNode('lShoulder', v.Vector3(-0.6, -14.3, 0.0));
+    final rShoulder = StickmanNode('rShoulder', v.Vector3(-0.2, -14.7, 0.0));
     neck.children.add(lShoulder);
     neck.children.add(rShoulder);
 
-    final lElbow = StickmanNode('lElbow', v.Vector3(-10, -10, 0));
+    final lElbow = StickmanNode('lElbow', v.Vector3(-6.1, -7.2, 0.0));
     lShoulder.children.add(lElbow);
-    final lHand = StickmanNode('lHand', v.Vector3(-10, 0, 0));
+    final lHand = StickmanNode('lHand', v.Vector3(-10.0, 0.0, 0.0));
     lElbow.children.add(lHand);
 
-    final rElbow = StickmanNode('rElbow', v.Vector3(10, -10, 0));
+    final rElbow = StickmanNode('rElbow', v.Vector3(6.2, -7.4, 0.0));
     rShoulder.children.add(rElbow);
-    final rHand = StickmanNode('rHand', v.Vector3(10, 0, 0));
+    final rHand = StickmanNode('rHand', v.Vector3(10.0, 0.0, 0.0));
     rElbow.children.add(rHand);
 
-    // Lower Body
-    final lHip = StickmanNode('lHip', v.Vector3(-3, 0, 0));
-    final rHip = StickmanNode('rHip', v.Vector3(3, 0, 0));
+    final lHip = StickmanNode('lHip', v.Vector3(0.6, -1.0, 0.0));
+    final rHip = StickmanNode('rHip', v.Vector3(0.6, -0.6, 0.0));
     root.children.add(lHip);
     root.children.add(rHip);
 
-    final lKnee = StickmanNode('lKnee', v.Vector3(-3, 12, 0));
+    final lKnee = StickmanNode('lKnee', v.Vector3(-4.1, 11.8, 0.0));
     lHip.children.add(lKnee);
-    final lFoot = StickmanNode('lFoot', v.Vector3(-3, 25, 0));
+    final lFoot = StickmanNode('lFoot', v.Vector3(-7.2, 24.5, 0.0));
     lKnee.children.add(lFoot);
 
-    final rKnee = StickmanNode('rKnee', v.Vector3(3, 12, 0));
+    final rKnee = StickmanNode('rKnee', v.Vector3(5.0, 12.0, 0.0));
     rHip.children.add(rKnee);
-    final rFoot = StickmanNode('rFoot', v.Vector3(3, 25, 0));
+    final rFoot = StickmanNode('rFoot', v.Vector3(7.9, 24.3, 0.0));
     rKnee.children.add(rFoot);
 
     _refreshNodeCache();

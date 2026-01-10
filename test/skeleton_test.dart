@@ -3,27 +3,23 @@ import 'package:stickman_3d/stickman_3d.dart';
 import 'package:vector_math/vector_math_64.dart' as v;
 
 void main() {
-  test('StickmanSkeleton initializes with standing pose', () {
+  test('StickmanSkeleton initializes with user defined standing pose', () {
     final skeleton = StickmanSkeleton();
 
-    // Hip at origin
-    expect(skeleton.hip, equals(v.Vector3(0, 0, 0)));
+    // Check specific coordinates from the requested update
+    expect(skeleton.hip.x, closeTo(1.0, 0.001));
+    expect(skeleton.neck.y, closeTo(-14.7, 0.001));
 
-    // Feet on ground (y=25)
-    expect(skeleton.lFoot.y, equals(25));
-    expect(skeleton.rFoot.y, equals(25));
+    // Check narrow shoulders (user requested "remove hip and shoulder points" effect)
+    // lShoulder (-0.6) is very close to neck (0.0)
+    expect(skeleton.lShoulder.x, closeTo(-0.6, 0.001));
+    expect(skeleton.rShoulder.x, closeTo(-0.2, 0.001));
 
-    // Head above origin
-    expect(skeleton.head!.y, lessThan(0));
-    expect(skeleton.neck.y, lessThan(0));
+    // Check narrow hips
+    expect(skeleton.lHip.x, closeTo(0.6, 0.001));
+    expect(skeleton.rHip.x, closeTo(0.6, 0.001));
 
-    // Shoulders
-    expect(skeleton.lShoulder.x, lessThan(0));
-    expect(skeleton.rShoulder.x, greaterThan(0));
-
-    // Hands lower than shoulders in standing pose (y is down)
-    // lShoulder y = -15, lHand y = 0. 0 > -15.
-    expect(skeleton.lHand.y, greaterThan(skeleton.lShoulder.y));
-    expect(skeleton.rHand.y, greaterThan(skeleton.rShoulder.y));
+    // Check stroke width update
+    expect(skeleton.strokeWidth, closeTo(4.6, 0.001));
   });
 }
