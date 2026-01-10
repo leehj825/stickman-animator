@@ -16,4 +16,10 @@ class StickmanSkeleton {
   v.Vector3 rElbow = v.Vector3.zero();
   v.Vector3 lHand = v.Vector3.zero();
   v.Vector3 rHand = v.Vector3.zero();
+
+  // Helper to get all points as a list for bulk operations
+  List<v.Vector3> get allPoints => [
+    hip, neck, lShoulder, rShoulder, lHip, rHip,
+    lKnee, rKnee, lFoot, rFoot, lElbow, rElbow, lHand, rHand
+  ];
 }
