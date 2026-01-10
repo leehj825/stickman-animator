@@ -38,11 +38,11 @@ class _StickmanEditorPageState extends State<StickmanEditorPage>
   @override
   void initState() {
     super.initState();
+    // User asked to "make initial stick man larger".
+    // We handle view zoom in the editor, but setting a larger base scale here is also good.
+    // However, the editor now defaults _zoom to 2.0.
+    // Let's keep scale 1.0 here to avoid double scaling issues if logic assumes 1.0.
     _controller = StickmanController(scale: 1.0);
-    // Start with PoseMotionStrategy (editor friendly)
-    // Wait, the editor sets this itself in initState.
-    // But we need to pump updates for `lerp` to work if we were using it.
-    // The editor uses Drag to update positions directly.
 
     _ticker = createTicker(_onTick)..start();
   }
@@ -53,7 +53,6 @@ class _StickmanEditorPageState extends State<StickmanEditorPage>
     _lastTime = currentTime;
 
     setState(() {
-      // We still call update so any physics/interpolation runs
       _controller.update(dt, 0.0, 0.0);
     });
   }
@@ -66,11 +65,9 @@ class _StickmanEditorPageState extends State<StickmanEditorPage>
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Stickman Editor'),
-      ),
-      body: StickmanPoseEditor(controller: _controller),
-    );
+    // We don't need Scaffold/AppBar here because StickmanPoseEditor now provides its own full screen view/scaffold background
+    // But StickmanPoseEditor returns a LayoutBuilder/Scaffold.
+    // So we can just return it.
+    return StickmanPoseEditor(controller: _controller);
   }
 }
