@@ -17,7 +17,7 @@ class StickmanPoseEditor extends StatefulWidget {
 class _StickmanPoseEditorState extends State<StickmanPoseEditor> {
   // Mapping of bone names to their Vector3 objects in the skeleton
   late Map<String, v.Vector3> _boneMap;
-  String? _draggedBone;
+  final TransformationController _transformationController = TransformationController();
 
   @override
   void initState() {
@@ -26,6 +26,12 @@ class _StickmanPoseEditorState extends State<StickmanPoseEditor> {
 
     // Set to ManualMotionStrategy to allow dragging without fighting with procedural logic or lerp
     widget.controller.setStrategy(ManualMotionStrategy());
+  }
+
+  @override
+  void dispose() {
+    _transformationController.dispose();
+    super.dispose();
   }
 
   void _initBoneMap() {
@@ -48,24 +54,36 @@ class _StickmanPoseEditorState extends State<StickmanPoseEditor> {
     };
   }
 
-  // Coordinate Mapping matching StickmanPainter
+  // Coordinate Mapping matching StickmanPainter + InteractiveViewer Transform
   Offset _toScreen(v.Vector3 vec, Size size) {
+    // 1. Calculate Local Canvas Position (as per StickmanPainter)
     final center = Offset(size.width / 2, size.height / 2);
-    final scaled = Offset(vec.x, vec.y + (vec.z * 0.3)) * widget.controller.scale;
-    return center + scaled;
+    final localPos = center + (Offset(vec.x, vec.y + (vec.z * 0.3)) * widget.controller.scale);
+
+    // 2. Apply InteractiveViewer Transform
+    // The matrix works on 3D points, but here we work on 2D offsets.
+    // Matrix4.transform3(Vector3) is the usual way.
+    final matrix = _transformationController.value;
+    final transformed = MatrixUtils.transformPoint(matrix, localPos);
+
+    return transformed;
   }
 
-  // Inverse Mapping (Simplified)
+  // Inverse Mapping
   void _updateBonePosition(String boneName, Offset delta) {
     if (!_boneMap.containsKey(boneName)) return;
 
     final bone = _boneMap[boneName]!;
-    final scale = widget.controller.scale;
-    if (scale == 0) return;
+    final modelScale = widget.controller.scale;
+    if (modelScale == 0) return;
 
-    // Direct update of the skeleton vectors
-    bone.x += delta.dx / scale;
-    bone.y += delta.dy / scale;
+    // We need to account for the View Scale (Zoom)
+    // Dragging 10px on screen corresponds to (10 / Zoom) in the canvas space.
+    final viewScale = _transformationController.value.getMaxScaleOnAxis();
+
+    // Update bone
+    bone.x += delta.dx / (modelScale * viewScale);
+    bone.y += delta.dy / (modelScale * viewScale);
   }
 
   @override
@@ -73,19 +91,37 @@ class _StickmanPoseEditorState extends State<StickmanPoseEditor> {
     return LayoutBuilder(
       builder: (context, constraints) {
         final size = Size(constraints.maxWidth, constraints.maxHeight);
+
         return Stack(
           children: [
-            // Bottom: The Painter
-            Positioned.fill(
-              child: CustomPaint(
-                painter: StickmanPainter(controller: widget.controller),
+            // Layer 1: The Zoomable Editor View
+            InteractiveViewer(
+              transformationController: _transformationController,
+              maxScale: 5.0,
+              minScale: 0.1,
+              boundaryMargin: const EdgeInsets.all(double.infinity),
+              constrained: true, // Use viewport constraints, painter centers itself
+              onInteractionUpdate: (details) {
+                 // Trigger rebuild to update handle positions as we zoom/pan
+                 setState(() {});
+              },
+              child: SizedBox(
+                 width: size.width,
+                 height: size.height,
+                 child: CustomPaint(
+                   painter: StickmanPainter(controller: widget.controller),
+                 ),
               ),
             ),
 
-            // Top: Draggable Handles
+            // Layer 2: Draggable Handles (Overlay)
+            // These are drawn *outside* InteractiveViewer so they stay constant size.
+            // We manually map their positions using _toScreen().
             ..._boneMap.keys.map((name) {
               final bone = _boneMap[name]!;
               final screenPos = _toScreen(bone, size);
+
+              // Only draw if within bounds? No, let them bleed or clip naturally.
 
               return Positioned(
                 left: screenPos.dx - 10,
@@ -109,13 +145,17 @@ class _StickmanPoseEditorState extends State<StickmanPoseEditor> {
               );
             }).toList(),
 
-            // UI Controls
-            Positioned(
-              bottom: 20,
-              right: 20,
-              child: ElevatedButton(
-                onPressed: _copyPoseToClipboard,
-                child: const Text("Copy Pose to Clipboard"),
+            // Layer 3: UI Controls
+            Align(
+              alignment: Alignment.bottomRight,
+              child: SafeArea(
+                child: Padding(
+                  padding: const EdgeInsets.all(20),
+                  child: ElevatedButton(
+                    onPressed: _copyPoseToClipboard,
+                    child: const Text("Copy Pose to Clipboard"),
+                  ),
+                ),
               ),
             ),
           ],
