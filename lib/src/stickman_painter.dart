@@ -1,73 +1,273 @@
 import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:vector_math/vector_math_64.dart' as v;
+import 'stickman_skeleton.dart'; // Needed for StickmanNode
 import 'stickman_animator.dart';
+
+// Axis Mode Enum (Used in Editor too)
+enum AxisMode { none, x, y, z }
+
+// Camera View Enum
+enum CameraView { front, side, top, free }
 
 /// 3. THE PAINTER: Pure Flutter Rendering (No Flame logic here)
 class StickmanPainter extends CustomPainter {
   final StickmanController controller;
   final Color color;
 
-  StickmanPainter({required this.controller, this.color = Colors.white});
+  // View Parameters
+  final CameraView cameraView;
+  final double viewRotationX; // Pitch (only used in Free mode)
+  final double viewRotationY; // Yaw (only used in Free mode)
+  final double viewZoom;
+  final Offset viewPan;
+  final double cameraHeightOffset;
+
+  // Editor State
+  final String? selectedNodeId;
+  final AxisMode axisMode;
+
+  StickmanPainter({
+    required this.controller,
+    this.color = Colors.white,
+    this.cameraView = CameraView.free,
+    this.viewRotationX = 0.0,
+    this.viewRotationY = 0.0,
+    this.viewZoom = 1.0,
+    this.viewPan = Offset.zero,
+    this.cameraHeightOffset = 0.0,
+    this.selectedNodeId,
+    this.axisMode = AxisMode.none,
+  });
+
+  // Public helper so Editor can use exact same projection
+  static Offset project(
+      v.Vector3 point,
+      Size size,
+      CameraView view,
+      double rotX,
+      double rotY,
+      double zoom,
+      Offset pan,
+      double heightOffset)
+  {
+    double x = 0;
+    double y = 0;
+
+    switch (view) {
+      case CameraView.front: // Z-Axis: Project (x, y). Ignore z.
+        x = point.x;
+        y = point.y;
+        break;
+      case CameraView.side: // X-Axis: Project (z, y). Ignore x.
+        x = point.z;
+        y = point.y;
+        break;
+      case CameraView.top: // Y-Axis: Project (x, z). Ignore y.
+        x = point.x;
+        y = point.z;
+        break;
+      case CameraView.free: // Perspective/Free: 3D Rotation
+        // Rotate Y (Yaw)
+        double x1 = point.x * cos(rotY) - point.z * sin(rotY);
+        double z1 = point.x * sin(rotY) + point.z * cos(rotY);
+        double y1 = point.y;
+        // Rotate X (Pitch)
+        double y2 = y1 * cos(rotX) - z1 * sin(rotX);
+        double z2 = y1 * sin(rotX) + z1 * cos(rotX);
+        double x2 = x1;
+
+        x = x2;
+        y = y2;
+        break;
+    }
+
+    // Apply Zoom
+    double sx = x * zoom;
+    double sy = y * zoom;
+
+    // Apply Camera Height Offset
+    sy += heightOffset;
+
+    // Center and Pan
+    double cx = size.width / 2;
+    double cy = size.height / 2;
+
+    return Offset(cx + pan.dx + sx, cy + pan.dy + sy);
+  }
 
   @override
   void paint(Canvas canvas, Size size) {
     final skel = controller.skeleton;
+
+    // Use dynamic visual properties from skeleton
+    final strokeWidth = skel.strokeWidth * viewZoom * controller.scale;
+    final headRadius = skel.headRadius * viewZoom * controller.scale;
+
     final paint = Paint()
       ..color = color
       ..style = PaintingStyle.stroke
-      ..strokeWidth = 3.0 * controller.scale
+      ..strokeWidth = strokeWidth
       ..strokeCap = StrokeCap.round;
 
     final fillPaint = Paint()..color = color ..style = PaintingStyle.fill;
 
-    // Center the canvas
-    canvas.save();
-    canvas.translate(size.width / 2, size.height / 2); // Center drawing
-    canvas.scale(controller.scale);
+    // Draw Grid
+    _drawGrid(canvas, size);
 
-    // 3D Projection Helper
-    Offset toScreen(v.Vector3 v) => Offset(v.x, v.y + (v.z * 0.3));
+    // 3D Projection Helper instance
+    Offset toScreen(v.Vector3 vec) => project(
+      vec * controller.scale,
+      size,
+      cameraView,
+      viewRotationX,
+      viewRotationY,
+      viewZoom,
+      viewPan,
+      cameraHeightOffset
+    );
 
-    // Draw Body
-    canvas.drawLine(toScreen(skel.hip), toScreen(skel.neck), paint);
+    // Recursive Drawing
+    void drawNode(StickmanNode node) {
+      final start = toScreen(node.position);
 
-    // Draw Legs
-    _drawLimb(canvas, toScreen(skel.lHip), toScreen(skel.lKnee), toScreen(skel.lFoot), paint);
-    _drawLimb(canvas, toScreen(skel.rHip), toScreen(skel.rKnee), toScreen(skel.rFoot), paint);
+      // Special Draw for Head Node
+      if (node.id == 'head') {
+        canvas.drawCircle(start, headRadius, fillPaint);
+      }
 
-    // Draw Arms
-    _drawLimb(canvas, toScreen(skel.lShoulder), toScreen(skel.lElbow), toScreen(skel.lHand), paint);
-    _drawLimb(canvas, toScreen(skel.rShoulder), toScreen(skel.rElbow), toScreen(skel.rHand), paint);
-
-    // Head
-    Offset headCenter = toScreen(skel.neck + v.Vector3(0, -8, 0));
-    canvas.drawCircle(headCenter, 6, fillPaint);
-
-    // Weapons
-    if (controller.weaponType == WeaponType.sword) {
-      _drawSword(canvas, toScreen(skel.rHand), controller.facingAngle, controller.isAttacking);
+      for (var child in node.children) {
+         final end = toScreen(child.position);
+         canvas.drawLine(start, end, paint);
+         drawNode(child);
+      }
     }
 
-    canvas.restore();
+    // Draw Bones
+    drawNode(skel.root);
+
+    // Legacy Support
+    if (!skel.nodes.containsKey('head') && skel.nodes.containsKey('neck')) {
+      Offset headCenter = toScreen(skel.neck + v.Vector3(0, -8, 0));
+      canvas.drawCircle(headCenter, headRadius, fillPaint);
+    }
+
+    // Draw Axis Constraints
+    if (selectedNodeId != null && axisMode != AxisMode.none) {
+      final node = skel.nodes[selectedNodeId];
+      if (node != null) {
+        _drawAxisLine(canvas, size, node.position, axisMode, toScreen);
+      }
+    }
   }
 
-  void _drawLimb(Canvas c, Offset start, Offset mid, Offset end, Paint p) {
-    c.drawLine(start, mid, p);
-    c.drawLine(mid, end, p);
+  void _drawAxisLine(Canvas canvas, Size size, v.Vector3 pos, AxisMode mode, Offset Function(v.Vector3) projectFunc) {
+     final p = Paint()
+       ..style = PaintingStyle.stroke
+       ..strokeWidth = 2.0;
+
+     v.Vector3 axisDir;
+     if (mode == AxisMode.x) {
+       p.color = Colors.red;
+       axisDir = v.Vector3(1, 0, 0);
+     } else if (mode == AxisMode.y) {
+       p.color = Colors.green;
+       axisDir = v.Vector3(0, 1, 0);
+     } else { // Z
+       p.color = Colors.blue;
+       axisDir = v.Vector3(0, 0, 1);
+     }
+
+     final length = 1000.0;
+     final start3D = pos - axisDir * length;
+     final end3D = pos + axisDir * length;
+
+     final start2D = projectFunc(start3D);
+     final end2D = projectFunc(end3D);
+
+     _drawDottedLine(canvas, start2D, end2D, p);
   }
 
-  void _drawSword(Canvas canvas, Offset handPos, double facing, bool attacking) {
-      double angle = facing;
-      if (attacking) angle += pi / 2;
-      final Paint p = Paint()..color = Colors.white ..strokeWidth = 2;
-      Offset end = handPos + Offset(cos(angle) * 20, sin(angle) * 5 - 20);
-      canvas.drawLine(handPos, end, p);
-      // Guard
-      Offset guardCenter = handPos + Offset(cos(angle) * 5, sin(angle) * 1 - 5);
-      canvas.drawLine(guardCenter - Offset(5,0), guardCenter + Offset(5,0), p);
+  void _drawDottedLine(Canvas canvas, Offset p1, Offset p2, Paint paint) {
+    const double dashWidth = 5;
+    const double dashSpace = 5;
+    double distance = (p2 - p1).distance;
+    double dx = (p2.dx - p1.dx) / distance;
+    double dy = (p2.dy - p1.dy) / distance;
+
+    if (distance == 0) return;
+
+    double currentX = p1.dx;
+    double currentY = p1.dy;
+
+    double drawn = 0;
+    while (drawn < distance) {
+       canvas.drawLine(
+         Offset(currentX, currentY),
+         Offset(currentX + dx * dashWidth, currentY + dy * dashWidth),
+         paint
+       );
+       currentX += dx * (dashWidth + dashSpace);
+       currentY += dy * (dashWidth + dashSpace);
+       drawn += dashWidth + dashSpace;
+    }
+  }
+
+  void _drawGrid(Canvas canvas, Size size) {
+    final gridPaint = Paint()
+      ..color = Colors.white.withOpacity(0.2)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.0;
+
+    const int steps = 10;
+    const double range = 100.0;
+    const double stepSize = range * 2 / steps;
+
+    // Helper to project a generic 3D point
+    Offset p3(double x, double y, double z) => project(
+      v.Vector3(x, y, z) * controller.scale,
+      size,
+      cameraView,
+      viewRotationX,
+      viewRotationY,
+      viewZoom,
+      viewPan,
+      cameraHeightOffset
+    );
+
+    for (int i = 0; i <= steps; i++) {
+      double v = -range + i * stepSize;
+
+      if (cameraView == CameraView.front) {
+         canvas.drawLine(p3(-range, v, 0), p3(range, v, 0), gridPaint);
+         canvas.drawLine(p3(v, -range, 0), p3(v, range, 0), gridPaint);
+      } else if (cameraView == CameraView.side) {
+         canvas.drawLine(p3(0, v, -range), p3(0, v, range), gridPaint);
+         canvas.drawLine(p3(0, -range, v), p3(0, range, v), gridPaint);
+      } else if (cameraView == CameraView.top || cameraView == CameraView.free) {
+         canvas.drawLine(p3(-range, 25, v), p3(range, 25, v), gridPaint);
+         canvas.drawLine(p3(v, 25, -range), p3(v, 25, range), gridPaint);
+      }
+    }
   }
 
   @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => true;
+  bool shouldRepaint(covariant StickmanPainter oldDelegate) {
+    // Add check for style properties changes if they are not deeply checked
+    // The controller is the same instance usually, but skeleton props might change.
+    // controller.skeleton is mutable. We rely on the parent (Editor) calling setState()
+    // to trigger this build, and CustomPainter will repaint if shouldRepaint returns true.
+    // Since we pass controller, we should assume it might have changed internally.
+    // Just returning true or checking params is standard.
+    // However, for optimization we check fields.
+    return oldDelegate.cameraView != cameraView ||
+           oldDelegate.viewRotationX != viewRotationX ||
+           oldDelegate.viewRotationY != viewRotationY ||
+           oldDelegate.viewZoom != viewZoom ||
+           oldDelegate.viewPan != viewPan ||
+           oldDelegate.cameraHeightOffset != cameraHeightOffset ||
+           oldDelegate.controller != controller ||
+           oldDelegate.selectedNodeId != selectedNodeId ||
+           oldDelegate.axisMode != axisMode;
+  }
 }

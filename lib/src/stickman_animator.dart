@@ -5,10 +5,134 @@ import 'stickman_skeleton.dart';
 enum WeaponType { none, sword, axe, bow }
 enum StickmanState { animating, ragdoll }
 
+/// Interface for movement strategies
+abstract class MotionStrategy {
+  void update(double dt, StickmanController controller);
+}
+
+/// A strategy that does nothing, allowing manual manipulation of the skeleton.
+class ManualMotionStrategy implements MotionStrategy {
+  @override
+  void update(double dt, StickmanController controller) {
+    // No-op: The skeleton is updated manually (e.g. by the Editor)
+  }
+}
+
+/// The existing procedural sine-wave/running logic
+class ProceduralMotionStrategy implements MotionStrategy {
+  @override
+  void update(double dt, StickmanController controller) {
+    // --- Local Space Calculation ---
+    // 1. Spine & Breathing
+    // NOTE: We are setting values via the compatibility setters in StickmanSkeleton
+    controller.skeleton.hip.setValues(0, 0, 0);
+    double breath = sin(controller.time * 0.5) * 1.0;
+    double bounce = breath * (1 - controller.runWeight) + (sin(controller.time)).abs() * 3.0 * controller.runWeight;
+    controller.skeleton.neck.setValues(0, -25 + bounce, 0);
+
+    // Update Head relative to Neck
+    if (controller.skeleton.head != null) {
+      // Offset head by 8 units up (-Y)
+      controller.skeleton.setHead(controller.skeleton.neck + v.Vector3(0, -8, 0));
+    }
+
+    // 2. Shoulders & Hips (Relative to body)
+    controller.skeleton.lShoulder = controller.skeleton.neck.clone();
+    controller.skeleton.rShoulder = controller.skeleton.neck.clone();
+    controller.skeleton.lHip = controller.skeleton.hip.clone();
+    controller.skeleton.rHip = controller.skeleton.hip.clone();
+
+    // 3. Limbs (Run Cycle)
+    double legSwing = sin(controller.time) * 0.8 * controller.runWeight;
+    double armSwing = cos(controller.time) * 0.8 * controller.runWeight;
+
+    // Helper to rotate local points
+    v.Vector3 rotateX(v.Vector3 point, double angle) {
+      final rot = v.Matrix3.rotationX(angle);
+      return rot.transform(point);
+    }
+
+    // Legs
+    controller.skeleton.lKnee = rotateX(v.Vector3(-3, 12, 0), legSwing) + controller.skeleton.lHip;
+    controller.skeleton.rKnee = rotateX(v.Vector3(3, 12, 0), -legSwing) + controller.skeleton.rHip;
+    controller.skeleton.lFoot = rotateX(v.Vector3(-3, 12, 0), legSwing + 0.2) + controller.skeleton.lKnee;
+    controller.skeleton.rFoot = rotateX(v.Vector3(3, 12, 0), -legSwing + 0.2) + controller.skeleton.rKnee;
+
+    // Arms
+    double lArmAngle = -armSwing;
+    double rArmAngle = armSwing;
+
+    // Weapon logic override
+    if (controller.isAttacking) {
+      rArmAngle = -1.5;
+    } else if (controller.weaponType == WeaponType.bow) {
+      lArmAngle = -1.5;
+      rArmAngle = -1.5;
+    } else if (controller.weaponType != WeaponType.none) {
+      rArmAngle = -0.5;
+    }
+
+    controller.skeleton.lElbow = rotateX(v.Vector3(-6, 10, 0), lArmAngle) + controller.skeleton.lShoulder;
+    controller.skeleton.rElbow = rotateX(v.Vector3(6, 10, 0), rArmAngle) + controller.skeleton.rShoulder;
+
+    controller.skeleton.lHand = rotateX(v.Vector3(0, 10, 0), lArmAngle - 0.3) + controller.skeleton.lElbow;
+    controller.skeleton.rHand = rotateX(v.Vector3(0, 10, 0), rArmAngle - 0.3) + controller.skeleton.rElbow;
+
+    // Attack Punch Lunge
+    if (controller.isAttacking) {
+       double progress = sin((controller.attackTimer / 0.3) * pi);
+       controller.skeleton.rHand.z += progress * 15;
+       controller.skeleton.rHand.y -= progress * 5;
+    }
+
+    // --- Global Rotation (Y-Axis) ---
+    final rotY = v.Matrix3.rotationY(controller.facingAngle);
+
+    // Apply to all points
+    // Using traverse to support any structure, or just the main ones?
+    // Procedural strategy specifically positions the standard skeleton.
+    // If we have extra nodes, they won't be animated procedurally unless they are children of these nodes
+    // and we propagate rotation (which we don't do here, we set absolute positions).
+    // So for now, we just rotate the standard points.
+
+    // Actually, if we rotate the parent, the children should move?
+    // The current logic calculates absolute positions for every standard bone.
+    // So if I add a child to lHand, it won't move unless I manually move it relative to lHand.
+    // But since `StickmanSkeleton` is just a data container, and this strategy overwrites values,
+    // extra nodes will stay at (0,0,0) or wherever they were initialized unless updated.
+
+    // Ideally, we should apply rotation to the whole hierarchy if we want "Global Rotation".
+    // But existing logic iterates a specific list. Let's keep it safe.
+
+    List<v.Vector3> points = controller.skeleton.allPoints; // Uses recursive fetch now
+
+    for (var p in points) {
+      p.setFrom(rotY.transform(p));
+    }
+  }
+}
+
+/// Interpolates the skeleton toward a target pose
+class PoseMotionStrategy implements MotionStrategy {
+  final StickmanSkeleton targetPose;
+
+  PoseMotionStrategy(this.targetPose);
+
+  @override
+  void update(double dt, StickmanController controller) {
+    // Interpolate towards the target pose
+    double t = (dt * 5.0).clamp(0.0, 1.0);
+    controller.skeleton.lerp(targetPose, t);
+  }
+}
+
+
 /// 2. THE ANIMATOR: Calculates where the bones should be
 class StickmanController {
   final StickmanSkeleton skeleton = StickmanSkeleton();
   StickmanState state = StickmanState.animating;
+
+  late MotionStrategy _activeStrategy;
 
   // Configuration
   WeaponType weaponType;
@@ -26,9 +150,19 @@ class StickmanController {
   // Physics State
   _RagdollPhysics? _ragdoll;
 
-  StickmanController({this.scale = 1.0, this.weaponType = WeaponType.none});
+  StickmanController({this.scale = 1.0, this.weaponType = WeaponType.none}) {
+    _activeStrategy = ProceduralMotionStrategy();
+  }
 
+  // Getters for Strategy to access private fields if they were private
+  double get time => _time;
+  double get runWeight => _runWeight;
   double get facingAngle => _facingAngle;
+  double get attackTimer => _attackTimer;
+
+  void setStrategy(MotionStrategy strategy) {
+    _activeStrategy = strategy;
+  }
 
   void die() {
     if (state == StickmanState.ragdoll) return;
@@ -83,92 +217,19 @@ class StickmanController {
       }
     }
 
-    _solveProceduralAnimation();
-  }
-
-  // Procedural Animation Solver (The "Math" part of your original render method)
-  void _solveProceduralAnimation() {
-    // --- Local Space Calculation ---
-    // 1. Spine & Breathing
-    skeleton.hip.setValues(0, 0, 0);
-    double breath = sin(_time * 0.5) * 1.0;
-    double bounce = breath * (1 - _runWeight) + (sin(_time)).abs() * 3.0 * _runWeight;
-    skeleton.neck.setValues(0, -25 + bounce, 0);
-
-    // 2. Shoulders & Hips (Relative to body)
-    skeleton.lShoulder = skeleton.neck.clone();
-    skeleton.rShoulder = skeleton.neck.clone();
-    skeleton.lHip = skeleton.hip.clone();
-    skeleton.rHip = skeleton.hip.clone();
-
-    // 3. Limbs (Run Cycle)
-    double legSwing = sin(_time) * 0.8 * _runWeight;
-    double armSwing = cos(_time) * 0.8 * _runWeight;
-
-    // Helper to rotate local points
-    v.Vector3 rotateX(v.Vector3 point, double angle) {
-      final rot = v.Matrix3.rotationX(angle);
-      return rot.transform(point);
-    }
-
-    // Legs
-    skeleton.lKnee = rotateX(v.Vector3(-3, 12, 0), legSwing) + skeleton.lHip;
-    skeleton.rKnee = rotateX(v.Vector3(3, 12, 0), -legSwing) + skeleton.rHip;
-    skeleton.lFoot = rotateX(v.Vector3(-3, 12, 0), legSwing + 0.2) + skeleton.lKnee;
-    skeleton.rFoot = rotateX(v.Vector3(3, 12, 0), -legSwing + 0.2) + skeleton.rKnee;
-
-    // Arms
-    double lArmAngle = -armSwing;
-    double rArmAngle = armSwing;
-
-    // Weapon logic override
-    if (isAttacking) {
-      rArmAngle = -1.5;
-    } else if (weaponType == WeaponType.bow) {
-      lArmAngle = -1.5;
-      rArmAngle = -1.5;
-    } else if (weaponType != WeaponType.none) {
-      rArmAngle = -0.5;
-    }
-
-    skeleton.lElbow = rotateX(v.Vector3(-6, 10, 0), lArmAngle) + skeleton.lShoulder;
-    skeleton.rElbow = rotateX(v.Vector3(6, 10, 0), rArmAngle) + skeleton.rShoulder;
-
-    skeleton.lHand = rotateX(v.Vector3(0, 10, 0), lArmAngle - 0.3) + skeleton.lElbow;
-    skeleton.rHand = rotateX(v.Vector3(0, 10, 0), rArmAngle - 0.3) + skeleton.rElbow;
-
-    // Attack Punch Lunge
-    if (isAttacking) {
-       double progress = sin((_attackTimer / 0.3) * pi);
-       skeleton.rHand.z += progress * 15;
-       skeleton.rHand.y -= progress * 5;
-    }
-
-    // --- Global Rotation (Y-Axis) ---
-    final rotY = v.Matrix3.rotationY(_facingAngle);
-    // Apply to all points
-    List<v.Vector3> points = [
-      skeleton.hip, skeleton.neck, skeleton.lShoulder, skeleton.rShoulder,
-      skeleton.lHip, skeleton.rHip, skeleton.lKnee, skeleton.rKnee,
-      skeleton.lFoot, skeleton.rFoot, skeleton.lElbow, skeleton.rElbow,
-      skeleton.lHand, skeleton.rHand
-    ];
-
-    for (var p in points) {
-      p.setFrom(rotY.transform(p));
-    }
+    _activeStrategy.update(dt, this);
   }
 }
 
 /// 3. PHYSICS ENGINE (Verlet Integration)
 class _RagdollPoint {
+  StickmanNode? node; // Link back to node
   v.Vector3 pos;
   v.Vector3 oldPos;
-  bool isPinned; // Used if we want to pin the head or feet
+  bool isPinned;
 
-  _RagdollPoint(v.Vector3 initialPos, {this.isPinned = false})
-      : pos = initialPos.clone(),
-        oldPos = initialPos.clone();
+  _RagdollPoint(this.pos, {this.isPinned = false, this.node})
+      : oldPos = pos.clone();
 }
 
 class _StickConstraint {
@@ -183,46 +244,56 @@ class _RagdollPhysics {
   List<_RagdollPoint> points = [];
   List<_StickConstraint> sticks = [];
 
-  // Map skeleton parts to physics points
-  late _RagdollPoint hip, neck, lS, rS, lH, rH, lK, rK, lF, rF, lE, rE, lHa, rHa;
+  // Used for cross-linking specific parts if they exist
+  _RagdollPoint? hip, lS, rS, lH, rH;
 
   _RagdollPhysics(StickmanSkeleton skel) {
-    // 1. Create Points from current skeleton positions
-    _RagdollPoint mk(v.Vector3 vec) {
-      var p = _RagdollPoint(vec);
-      points.add(p);
-      return p;
-    }
+    final pointMap = <String, _RagdollPoint>{};
 
-    hip = mk(skel.hip); neck = mk(skel.neck);
-    lS = mk(skel.lShoulder); rS = mk(skel.rShoulder);
-    lH = mk(skel.lHip); rH = mk(skel.rHip);
-    lK = mk(skel.lKnee); rK = mk(skel.rKnee);
-    lF = mk(skel.lFoot); rF = mk(skel.rFoot);
-    lE = mk(skel.lElbow); rE = mk(skel.rElbow);
-    lHa = mk(skel.lHand); rHa = mk(skel.rHand);
+    // 1. Create Points recursively
+    void buildPoints(StickmanNode node) {
+      var p = _RagdollPoint(node.position, node: node); // Use reference to position? No, separate physics state.
+      // Actually RagdollPoint copies the vector.
+      points.add(p);
+      pointMap[node.id] = p;
+
+      // Assign special points for cross-linking
+      if (node.id == 'hip') hip = p;
+      if (node.id == 'lShoulder') lS = p;
+      if (node.id == 'rShoulder') rS = p;
+      if (node.id == 'lHip') lH = p;
+      if (node.id == 'rHip') rH = p;
+
+      for (var c in node.children) {
+        buildPoints(c);
+      }
+    }
+    buildPoints(skel.root);
 
     // 2. Create Sticks (Constraints) - Defines the "Body Shape"
     void link(_RagdollPoint a, _RagdollPoint b) => sticks.add(_StickConstraint(a, b));
 
-    // Spine
-    link(hip, neck);
-    // Shoulders (Connect to Neck)
-    link(neck, lS); link(neck, rS);
-    // Hips (Connect to Hip center)
-    link(hip, lH); link(hip, rH);
-    // Arms
-    link(lS, lE); link(lE, lHa);
-    link(rS, rE); link(rE, rHa);
-    // Legs
-    link(lH, lK); link(lK, lF);
-    link(rH, rK); link(rK, rF);
+    // Automatically link parents to children
+    void buildConstraints(StickmanNode node) {
+      if (!pointMap.containsKey(node.id)) return;
+      var p1 = pointMap[node.id]!;
+
+      for (var c in node.children) {
+         if (pointMap.containsKey(c.id)) {
+           link(p1, pointMap[c.id]!);
+           buildConstraints(c);
+         }
+      }
+    }
+    buildConstraints(skel.root);
 
     // Optional: Cross-links for stability (prevents collapsing too easily)
-    link(lS, rS); // Shoulder width
-    link(lH, rH); // Hip width
-    link(lS, lH); // Left Torso side
-    link(rS, rH); // Right Torso side
+    // Only if the specific nodes exist
+    if (lS != null && rS != null) link(lS!, rS!); // Shoulder width
+    if (lH != null && rH != null) link(lH!, rH!); // Hip width
+    if (lS != null && lH != null) link(lS!, lH!); // Left Torso side
+    if (rS != null && rH != null) link(rS!, rH!); // Right Torso side
+    // Hip to neck is handled by tree traversal (hip -> neck)
   }
 
   void update(double dt) {
@@ -273,12 +344,13 @@ class _RagdollPhysics {
 
   // Copy simulated positions back to the visual skeleton
   void applyToSkeleton(StickmanSkeleton skel) {
-    skel.hip.setFrom(hip.pos); skel.neck.setFrom(neck.pos);
-    skel.lShoulder.setFrom(lS.pos); skel.rShoulder.setFrom(rS.pos);
-    skel.lHip.setFrom(lH.pos); skel.rHip.setFrom(rH.pos);
-    skel.lKnee.setFrom(lK.pos); skel.rKnee.setFrom(rK.pos);
-    skel.lFoot.setFrom(lF.pos); skel.rFoot.setFrom(rF.pos);
-    skel.lElbow.setFrom(lE.pos); skel.rElbow.setFrom(rE.pos);
-    skel.lHand.setFrom(lHa.pos); skel.rHand.setFrom(rHa.pos);
+    // Because we link points to nodes via ID (implicit) or reference?
+    // In constructor we iterated skel.root.
+    // We stored `node` in RagdollPoint.
+    for(var p in points) {
+      if(p.node != null) {
+        p.node!.position.setFrom(p.pos);
+      }
+    }
   }
 }

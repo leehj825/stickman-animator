@@ -17,19 +17,19 @@ class MyApp extends StatelessWidget {
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
         useMaterial3: true,
       ),
-      home: const StickmanDemo(),
+      home: const StickmanEditorPage(),
     );
   }
 }
 
-class StickmanDemo extends StatefulWidget {
-  const StickmanDemo({super.key});
+class StickmanEditorPage extends StatefulWidget {
+  const StickmanEditorPage({super.key});
 
   @override
-  State<StickmanDemo> createState() => _StickmanDemoState();
+  State<StickmanEditorPage> createState() => _StickmanEditorPageState();
 }
 
-class _StickmanDemoState extends State<StickmanDemo>
+class _StickmanEditorPageState extends State<StickmanEditorPage>
     with SingleTickerProviderStateMixin {
   late StickmanController _controller;
   late Ticker _ticker;
@@ -38,7 +38,12 @@ class _StickmanDemoState extends State<StickmanDemo>
   @override
   void initState() {
     super.initState();
-    _controller = StickmanController();
+    // User asked to "make initial stick man larger".
+    // We handle view zoom in the editor, but setting a larger base scale here is also good.
+    // However, the editor now defaults _zoom to 2.0.
+    // Let's keep scale 1.0 here to avoid double scaling issues if logic assumes 1.0.
+    _controller = StickmanController(scale: 1.0);
+
     _ticker = createTicker(_onTick)..start();
   }
 
@@ -47,7 +52,6 @@ class _StickmanDemoState extends State<StickmanDemo>
     final double dt = currentTime - _lastTime;
     _lastTime = currentTime;
 
-    // Simulate some movement
     setState(() {
       _controller.update(dt, 0.0, 0.0);
     });
@@ -61,27 +65,9 @@ class _StickmanDemoState extends State<StickmanDemo>
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Stickman 3D Demo'),
-        backgroundColor: Theme.of(context).colorScheme.inversePrimary,
-      ),
-      body: Center(
-        child: CustomPaint(
-          painter: StickmanPainter(controller: _controller),
-          size: const Size(300, 300),
-        ),
-      ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: () {
-            if (_controller.state == StickmanState.ragdoll) {
-                _controller.respawn();
-            } else {
-                _controller.die();
-            }
-        },
-        child: const Icon(Icons.refresh),
-      ),
-    );
+    // We don't need Scaffold/AppBar here because StickmanPoseEditor now provides its own full screen view/scaffold background
+    // But StickmanPoseEditor returns a LayoutBuilder/Scaffold.
+    // So we can just return it.
+    return StickmanPoseEditor(controller: _controller);
   }
 }
