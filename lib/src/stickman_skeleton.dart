@@ -1,67 +1,183 @@
 import 'package:vector_math/vector_math_64.dart' as v;
 
-/// 1. THE SKELETON: Holds the raw 3D data of the stickman
-class StickmanSkeleton {
-  v.Vector3 hip = v.Vector3.zero();
-  v.Vector3 neck = v.Vector3.zero();
-  v.Vector3 lShoulder = v.Vector3.zero();
-  v.Vector3 rShoulder = v.Vector3.zero();
-  v.Vector3 lHip = v.Vector3.zero();
-  v.Vector3 rHip = v.Vector3.zero();
-  v.Vector3 lKnee = v.Vector3.zero();
-  v.Vector3 rKnee = v.Vector3.zero();
-  v.Vector3 lFoot = v.Vector3.zero();
-  v.Vector3 rFoot = v.Vector3.zero();
-  v.Vector3 lElbow = v.Vector3.zero();
-  v.Vector3 rElbow = v.Vector3.zero();
-  v.Vector3 lHand = v.Vector3.zero();
-  v.Vector3 rHand = v.Vector3.zero();
+/// Represents a single node (joint) in the skeleton hierarchy
+class StickmanNode {
+  String id;
+  v.Vector3 position;
+  List<StickmanNode> children = [];
 
-  // Helper to get all points as a list for bulk operations
-  List<v.Vector3> get allPoints => [
-    hip, neck, lShoulder, rShoulder, lHip, rHip,
-    lKnee, rKnee, lFoot, rFoot, lElbow, rElbow, lHand, rHand
-  ];
+  StickmanNode(this.id, v.Vector3 pos) : position = v.Vector3.copy(pos);
 
-  StickmanSkeleton();
-
-  /// Returns a deep copy of the skeleton
-  StickmanSkeleton clone() {
-    final copy = StickmanSkeleton();
-    copy.hip.setFrom(hip);
-    copy.neck.setFrom(neck);
-    copy.lShoulder.setFrom(lShoulder);
-    copy.rShoulder.setFrom(rShoulder);
-    copy.lHip.setFrom(lHip);
-    copy.rHip.setFrom(rHip);
-    copy.lKnee.setFrom(lKnee);
-    copy.rKnee.setFrom(rKnee);
-    copy.lFoot.setFrom(lFoot);
-    copy.rFoot.setFrom(rFoot);
-    copy.lElbow.setFrom(lElbow);
-    copy.rElbow.setFrom(rElbow);
-    copy.lHand.setFrom(lHand);
-    copy.rHand.setFrom(rHand);
+  StickmanNode clone() {
+    final copy = StickmanNode(id, position);
+    for (final child in children) {
+      copy.children.add(child.clone());
+    }
     return copy;
   }
 
+  Map<String, dynamic> toJson() {
+    return {
+      'id': id,
+      'pos': [position.x, position.y, position.z],
+      'children': children.map((c) => c.toJson()).toList(),
+    };
+  }
+
+  factory StickmanNode.fromJson(Map<String, dynamic> json) {
+    final posList = json['pos'] as List;
+    final node = StickmanNode(
+      json['id'] as String,
+      v.Vector3(posList[0].toDouble(), posList[1].toDouble(), posList[2].toDouble()),
+    );
+    if (json.containsKey('children')) {
+      for (var childJson in (json['children'] as List)) {
+        node.children.add(StickmanNode.fromJson(childJson));
+      }
+    }
+    return node;
+  }
+}
+
+/// 1. THE SKELETON: Holds the raw 3D data of the stickman
+class StickmanSkeleton {
+  late StickmanNode root;
+
+  // Cache for fast access to standard bones
+  // Map ID -> Node
+  final Map<String, StickmanNode> _nodes = {};
+
+  StickmanSkeleton() {
+    // Build Default Hierarchy
+    // Hip is root
+    root = StickmanNode('hip', v.Vector3.zero());
+
+    final neck = StickmanNode('neck', v.Vector3.zero());
+    root.children.add(neck);
+
+    final lShoulder = StickmanNode('lShoulder', v.Vector3.zero());
+    final rShoulder = StickmanNode('rShoulder', v.Vector3.zero());
+    neck.children.add(lShoulder);
+    neck.children.add(rShoulder);
+
+    final lElbow = StickmanNode('lElbow', v.Vector3.zero());
+    lShoulder.children.add(lElbow);
+    final lHand = StickmanNode('lHand', v.Vector3.zero());
+    lElbow.children.add(lHand);
+
+    final rElbow = StickmanNode('rElbow', v.Vector3.zero());
+    rShoulder.children.add(rElbow);
+    final rHand = StickmanNode('rHand', v.Vector3.zero());
+    rElbow.children.add(rHand);
+
+    final lHip = StickmanNode('lHip', v.Vector3.zero());
+    final rHip = StickmanNode('rHip', v.Vector3.zero());
+    root.children.add(lHip);
+    root.children.add(rHip);
+
+    final lKnee = StickmanNode('lKnee', v.Vector3.zero());
+    lHip.children.add(lKnee);
+    final lFoot = StickmanNode('lFoot', v.Vector3.zero());
+    lKnee.children.add(lFoot);
+
+    final rKnee = StickmanNode('rKnee', v.Vector3.zero());
+    rHip.children.add(rKnee);
+    final rFoot = StickmanNode('rFoot', v.Vector3.zero());
+    rKnee.children.add(rFoot);
+
+    _refreshNodeCache();
+  }
+
+  // Private constructor for cloning
+  StickmanSkeleton._fromRoot(this.root) {
+    _refreshNodeCache();
+  }
+
+  void _refreshNodeCache() {
+    _nodes.clear();
+    void traverse(StickmanNode node) {
+      _nodes[node.id] = node;
+      for (var c in node.children) traverse(c);
+    }
+    traverse(root);
+  }
+
+  // Helper to get all points as a list for bulk operations (Legacy support + Physics)
+  List<v.Vector3> get allPoints {
+    final points = <v.Vector3>[];
+    void traverse(StickmanNode node) {
+      points.add(node.position);
+      for (var c in node.children) traverse(c);
+    }
+    traverse(root);
+    return points;
+  }
+
+  // Public Access to nodes
+  Map<String, StickmanNode> get nodes => _nodes;
+
+  // Legacy Getters and Setters
+  // The setter copies values into the node's position vector
+  v.Vector3 get hip => _nodes['hip']!.position;
+  set hip(v.Vector3 v) => _nodes['hip']!.position.setFrom(v);
+
+  v.Vector3 get neck => _nodes['neck']!.position;
+  set neck(v.Vector3 v) => _nodes['neck']!.position.setFrom(v);
+
+  v.Vector3 get lShoulder => _nodes['lShoulder']!.position;
+  set lShoulder(v.Vector3 v) => _nodes['lShoulder']!.position.setFrom(v);
+
+  v.Vector3 get rShoulder => _nodes['rShoulder']!.position;
+  set rShoulder(v.Vector3 v) => _nodes['rShoulder']!.position.setFrom(v);
+
+  v.Vector3 get lHip => _nodes['lHip']!.position;
+  set lHip(v.Vector3 v) => _nodes['lHip']!.position.setFrom(v);
+
+  v.Vector3 get rHip => _nodes['rHip']!.position;
+  set rHip(v.Vector3 v) => _nodes['rHip']!.position.setFrom(v);
+
+  v.Vector3 get lKnee => _nodes['lKnee']!.position;
+  set lKnee(v.Vector3 v) => _nodes['lKnee']!.position.setFrom(v);
+
+  v.Vector3 get rKnee => _nodes['rKnee']!.position;
+  set rKnee(v.Vector3 v) => _nodes['rKnee']!.position.setFrom(v);
+
+  v.Vector3 get lFoot => _nodes['lFoot']!.position;
+  set lFoot(v.Vector3 v) => _nodes['lFoot']!.position.setFrom(v);
+
+  v.Vector3 get rFoot => _nodes['rFoot']!.position;
+  set rFoot(v.Vector3 v) => _nodes['rFoot']!.position.setFrom(v);
+
+  v.Vector3 get lElbow => _nodes['lElbow']!.position;
+  set lElbow(v.Vector3 v) => _nodes['lElbow']!.position.setFrom(v);
+
+  v.Vector3 get rElbow => _nodes['rElbow']!.position;
+  set rElbow(v.Vector3 v) => _nodes['rElbow']!.position.setFrom(v);
+
+  v.Vector3 get lHand => _nodes['lHand']!.position;
+  set lHand(v.Vector3 v) => _nodes['lHand']!.position.setFrom(v);
+
+  v.Vector3 get rHand => _nodes['rHand']!.position;
+  set rHand(v.Vector3 v) => _nodes['rHand']!.position.setFrom(v);
+
+
+  /// Returns a deep copy of the skeleton
+  StickmanSkeleton clone() {
+    return StickmanSkeleton._fromRoot(root.clone());
+  }
+
   /// Linearly interpolates all bone vectors between this and other based on t (0.0 to 1.0).
-  /// Modifies this skeleton.
   void lerp(StickmanSkeleton other, double t) {
-    _lerpVec(hip, other.hip, t);
-    _lerpVec(neck, other.neck, t);
-    _lerpVec(lShoulder, other.lShoulder, t);
-    _lerpVec(rShoulder, other.rShoulder, t);
-    _lerpVec(lHip, other.lHip, t);
-    _lerpVec(rHip, other.rHip, t);
-    _lerpVec(lKnee, other.lKnee, t);
-    _lerpVec(rKnee, other.rKnee, t);
-    _lerpVec(lFoot, other.lFoot, t);
-    _lerpVec(rFoot, other.rFoot, t);
-    _lerpVec(lElbow, other.lElbow, t);
-    _lerpVec(rElbow, other.rElbow, t);
-    _lerpVec(lHand, other.lHand, t);
-    _lerpVec(rHand, other.rHand, t);
+    // We assume structure is identical for lerp.
+    // If not, we only lerp matching IDs.
+    void traverse(StickmanNode myNode) {
+      if (other.nodes.containsKey(myNode.id)) {
+        final target = other.nodes[myNode.id]!.position;
+        _lerpVec(myNode.position, target, t);
+      }
+      for (var c in myNode.children) traverse(c);
+    }
+    traverse(root);
   }
 
   void _lerpVec(v.Vector3 current, v.Vector3 target, double t) {
@@ -71,48 +187,10 @@ class StickmanSkeleton {
   }
 
   Map<String, dynamic> toJson() {
-    return {
-      'hip': _vecToList(hip),
-      'neck': _vecToList(neck),
-      'lShoulder': _vecToList(lShoulder),
-      'rShoulder': _vecToList(rShoulder),
-      'lHip': _vecToList(lHip),
-      'rHip': _vecToList(rHip),
-      'lKnee': _vecToList(lKnee),
-      'rKnee': _vecToList(rKnee),
-      'lFoot': _vecToList(lFoot),
-      'rFoot': _vecToList(rFoot),
-      'lElbow': _vecToList(lElbow),
-      'rElbow': _vecToList(rElbow),
-      'lHand': _vecToList(lHand),
-      'rHand': _vecToList(rHand),
-    };
+    return root.toJson();
   }
 
   factory StickmanSkeleton.fromJson(Map<String, dynamic> json) {
-    final skel = StickmanSkeleton();
-    void set(v.Vector3 vec, String key) {
-      if (json.containsKey(key)) {
-        final list = json[key] as List;
-        vec.setValues(list[0].toDouble(), list[1].toDouble(), list[2].toDouble());
-      }
-    }
-    set(skel.hip, 'hip');
-    set(skel.neck, 'neck');
-    set(skel.lShoulder, 'lShoulder');
-    set(skel.rShoulder, 'rShoulder');
-    set(skel.lHip, 'lHip');
-    set(skel.rHip, 'rHip');
-    set(skel.lKnee, 'lKnee');
-    set(skel.rKnee, 'rKnee');
-    set(skel.lFoot, 'lFoot');
-    set(skel.rFoot, 'rFoot');
-    set(skel.lElbow, 'lElbow');
-    set(skel.rElbow, 'rElbow');
-    set(skel.lHand, 'lHand');
-    set(skel.rHand, 'rHand');
-    return skel;
+    return StickmanSkeleton._fromRoot(StickmanNode.fromJson(json));
   }
-
-  List<double> _vecToList(v.Vector3 vec) => [vec.x, vec.y, vec.z];
 }

@@ -1,6 +1,7 @@
 import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:vector_math/vector_math_64.dart' as v;
+import 'stickman_skeleton.dart'; // Needed for StickmanNode
 import 'stickman_animator.dart';
 
 /// 3. THE PAINTER: Pure Flutter Rendering (No Flame logic here)
@@ -29,32 +30,32 @@ class StickmanPainter extends CustomPainter {
     // 3D Projection Helper
     Offset toScreen(v.Vector3 v) => Offset(v.x, v.y + (v.z * 0.3));
 
-    // Draw Body
-    canvas.drawLine(toScreen(skel.hip), toScreen(skel.neck), paint);
+    // Recursive Drawing
+    void drawNode(StickmanNode node) {
+      final start = toScreen(node.position);
 
-    // Draw Legs
-    _drawLimb(canvas, toScreen(skel.lHip), toScreen(skel.lKnee), toScreen(skel.lFoot), paint);
-    _drawLimb(canvas, toScreen(skel.rHip), toScreen(skel.rKnee), toScreen(skel.rFoot), paint);
+      for (var child in node.children) {
+         final end = toScreen(child.position);
+         canvas.drawLine(start, end, paint);
+         drawNode(child);
+      }
+    }
 
-    // Draw Arms
-    _drawLimb(canvas, toScreen(skel.lShoulder), toScreen(skel.lElbow), toScreen(skel.lHand), paint);
-    _drawLimb(canvas, toScreen(skel.rShoulder), toScreen(skel.rElbow), toScreen(skel.rHand), paint);
+    // Draw Bones
+    drawNode(skel.root);
 
-    // Head
-    Offset headCenter = toScreen(skel.neck + v.Vector3(0, -8, 0));
-    canvas.drawCircle(headCenter, 6, fillPaint);
+    // Legacy: Head (Draw at neck position)
+    if (skel.nodes.containsKey('neck')) {
+      Offset headCenter = toScreen(skel.neck + v.Vector3(0, -8, 0));
+      canvas.drawCircle(headCenter, 6, fillPaint);
+    }
 
-    // Weapons
-    if (controller.weaponType == WeaponType.sword) {
+    // Weapons (Legacy logic)
+    if (controller.weaponType == WeaponType.sword && skel.nodes.containsKey('rHand')) {
       _drawSword(canvas, toScreen(skel.rHand), controller.facingAngle, controller.isAttacking);
     }
 
     canvas.restore();
-  }
-
-  void _drawLimb(Canvas c, Offset start, Offset mid, Offset end, Paint p) {
-    c.drawLine(start, mid, p);
-    c.drawLine(mid, end, p);
   }
 
   void _drawSword(Canvas canvas, Offset handPos, double facing, bool attacking) {

@@ -24,6 +24,7 @@ class ProceduralMotionStrategy implements MotionStrategy {
   void update(double dt, StickmanController controller) {
     // --- Local Space Calculation ---
     // 1. Spine & Breathing
+    // NOTE: We are setting values via the compatibility setters in StickmanSkeleton
     controller.skeleton.hip.setValues(0, 0, 0);
     double breath = sin(controller.time * 0.5) * 1.0;
     double bounce = breath * (1 - controller.runWeight) + (sin(controller.time)).abs() * 3.0 * controller.runWeight;
@@ -80,13 +81,24 @@ class ProceduralMotionStrategy implements MotionStrategy {
 
     // --- Global Rotation (Y-Axis) ---
     final rotY = v.Matrix3.rotationY(controller.facingAngle);
+
     // Apply to all points
-    List<v.Vector3> points = [
-      controller.skeleton.hip, controller.skeleton.neck, controller.skeleton.lShoulder, controller.skeleton.rShoulder,
-      controller.skeleton.lHip, controller.skeleton.rHip, controller.skeleton.lKnee, controller.skeleton.rKnee,
-      controller.skeleton.lFoot, controller.skeleton.rFoot, controller.skeleton.lElbow, controller.skeleton.rElbow,
-      controller.skeleton.lHand, controller.skeleton.rHand
-    ];
+    // Using traverse to support any structure, or just the main ones?
+    // Procedural strategy specifically positions the standard skeleton.
+    // If we have extra nodes, they won't be animated procedurally unless they are children of these nodes
+    // and we propagate rotation (which we don't do here, we set absolute positions).
+    // So for now, we just rotate the standard points.
+
+    // Actually, if we rotate the parent, the children should move?
+    // The current logic calculates absolute positions for every standard bone.
+    // So if I add a child to lHand, it won't move unless I manually move it relative to lHand.
+    // But since `StickmanSkeleton` is just a data container, and this strategy overwrites values,
+    // extra nodes will stay at (0,0,0) or wherever they were initialized unless updated.
+
+    // Ideally, we should apply rotation to the whole hierarchy if we want "Global Rotation".
+    // But existing logic iterates a specific list. Let's keep it safe.
+
+    List<v.Vector3> points = controller.skeleton.allPoints; // Uses recursive fetch now
 
     for (var p in points) {
       p.setFrom(rotY.transform(p));
@@ -205,13 +217,13 @@ class StickmanController {
 
 /// 3. PHYSICS ENGINE (Verlet Integration)
 class _RagdollPoint {
+  StickmanNode? node; // Link back to node
   v.Vector3 pos;
   v.Vector3 oldPos;
-  bool isPinned; // Used if we want to pin the head or feet
+  bool isPinned;
 
-  _RagdollPoint(v.Vector3 initialPos, {this.isPinned = false})
-      : pos = initialPos.clone(),
-        oldPos = initialPos.clone();
+  _RagdollPoint(this.pos, {this.isPinned = false, this.node})
+      : oldPos = pos.clone();
 }
 
 class _StickConstraint {
@@ -226,46 +238,56 @@ class _RagdollPhysics {
   List<_RagdollPoint> points = [];
   List<_StickConstraint> sticks = [];
 
-  // Map skeleton parts to physics points
-  late _RagdollPoint hip, neck, lS, rS, lH, rH, lK, rK, lF, rF, lE, rE, lHa, rHa;
+  // Used for cross-linking specific parts if they exist
+  _RagdollPoint? hip, lS, rS, lH, rH;
 
   _RagdollPhysics(StickmanSkeleton skel) {
-    // 1. Create Points from current skeleton positions
-    _RagdollPoint mk(v.Vector3 vec) {
-      var p = _RagdollPoint(vec);
-      points.add(p);
-      return p;
-    }
+    final pointMap = <String, _RagdollPoint>{};
 
-    hip = mk(skel.hip); neck = mk(skel.neck);
-    lS = mk(skel.lShoulder); rS = mk(skel.rShoulder);
-    lH = mk(skel.lHip); rH = mk(skel.rHip);
-    lK = mk(skel.lKnee); rK = mk(skel.rKnee);
-    lF = mk(skel.lFoot); rF = mk(skel.rFoot);
-    lE = mk(skel.lElbow); rE = mk(skel.rElbow);
-    lHa = mk(skel.lHand); rHa = mk(skel.rHand);
+    // 1. Create Points recursively
+    void buildPoints(StickmanNode node) {
+      var p = _RagdollPoint(node.position, node: node); // Use reference to position? No, separate physics state.
+      // Actually RagdollPoint copies the vector.
+      points.add(p);
+      pointMap[node.id] = p;
+
+      // Assign special points for cross-linking
+      if (node.id == 'hip') hip = p;
+      if (node.id == 'lShoulder') lS = p;
+      if (node.id == 'rShoulder') rS = p;
+      if (node.id == 'lHip') lH = p;
+      if (node.id == 'rHip') rH = p;
+
+      for (var c in node.children) {
+        buildPoints(c);
+      }
+    }
+    buildPoints(skel.root);
 
     // 2. Create Sticks (Constraints) - Defines the "Body Shape"
     void link(_RagdollPoint a, _RagdollPoint b) => sticks.add(_StickConstraint(a, b));
 
-    // Spine
-    link(hip, neck);
-    // Shoulders (Connect to Neck)
-    link(neck, lS); link(neck, rS);
-    // Hips (Connect to Hip center)
-    link(hip, lH); link(hip, rH);
-    // Arms
-    link(lS, lE); link(lE, lHa);
-    link(rS, rE); link(rE, rHa);
-    // Legs
-    link(lH, lK); link(lK, lF);
-    link(rH, rK); link(rK, rF);
+    // Automatically link parents to children
+    void buildConstraints(StickmanNode node) {
+      if (!pointMap.containsKey(node.id)) return;
+      var p1 = pointMap[node.id]!;
+
+      for (var c in node.children) {
+         if (pointMap.containsKey(c.id)) {
+           link(p1, pointMap[c.id]!);
+           buildConstraints(c);
+         }
+      }
+    }
+    buildConstraints(skel.root);
 
     // Optional: Cross-links for stability (prevents collapsing too easily)
-    link(lS, rS); // Shoulder width
-    link(lH, rH); // Hip width
-    link(lS, lH); // Left Torso side
-    link(rS, rH); // Right Torso side
+    // Only if the specific nodes exist
+    if (lS != null && rS != null) link(lS!, rS!); // Shoulder width
+    if (lH != null && rH != null) link(lH!, rH!); // Hip width
+    if (lS != null && lH != null) link(lS!, lH!); // Left Torso side
+    if (rS != null && rH != null) link(rS!, rH!); // Right Torso side
+    // Hip to neck is handled by tree traversal (hip -> neck)
   }
 
   void update(double dt) {
@@ -316,12 +338,13 @@ class _RagdollPhysics {
 
   // Copy simulated positions back to the visual skeleton
   void applyToSkeleton(StickmanSkeleton skel) {
-    skel.hip.setFrom(hip.pos); skel.neck.setFrom(neck.pos);
-    skel.lShoulder.setFrom(lS.pos); skel.rShoulder.setFrom(rS.pos);
-    skel.lHip.setFrom(lH.pos); skel.rHip.setFrom(rH.pos);
-    skel.lKnee.setFrom(lK.pos); skel.rKnee.setFrom(rK.pos);
-    skel.lFoot.setFrom(lF.pos); skel.rFoot.setFrom(rF.pos);
-    skel.lElbow.setFrom(lE.pos); skel.rElbow.setFrom(rE.pos);
-    skel.lHand.setFrom(lHa.pos); skel.rHand.setFrom(rHa.pos);
+    // Because we link points to nodes via ID (implicit) or reference?
+    // In constructor we iterated skel.root.
+    // We stored `node` in RagdollPoint.
+    for(var p in points) {
+      if(p.node != null) {
+        p.node!.position.setFrom(p.pos);
+      }
+    }
   }
 }
