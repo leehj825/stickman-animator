@@ -55,6 +55,10 @@ class StickmanSkeleton {
     final neck = StickmanNode('neck', v.Vector3.zero());
     root.children.add(neck);
 
+    // Head as child of Neck
+    final head = StickmanNode('head', v.Vector3.zero());
+    neck.children.add(head);
+
     final lShoulder = StickmanNode('lShoulder', v.Vector3.zero());
     final rShoulder = StickmanNode('rShoulder', v.Vector3.zero());
     neck.children.add(lShoulder);
@@ -117,12 +121,15 @@ class StickmanSkeleton {
   Map<String, StickmanNode> get nodes => _nodes;
 
   // Legacy Getters and Setters
-  // The setter copies values into the node's position vector
   v.Vector3 get hip => _nodes['hip']!.position;
   set hip(v.Vector3 v) => _nodes['hip']!.position.setFrom(v);
 
   v.Vector3 get neck => _nodes['neck']!.position;
   set neck(v.Vector3 v) => _nodes['neck']!.position.setFrom(v);
+
+  // New Head getter/setter (safe access)
+  v.Vector3? get head => _nodes['head']?.position;
+  void setHead(v.Vector3 v) => _nodes['head']?.position.setFrom(v);
 
   v.Vector3 get lShoulder => _nodes['lShoulder']!.position;
   set lShoulder(v.Vector3 v) => _nodes['lShoulder']!.position.setFrom(v);

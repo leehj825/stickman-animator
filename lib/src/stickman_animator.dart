@@ -30,6 +30,12 @@ class ProceduralMotionStrategy implements MotionStrategy {
     double bounce = breath * (1 - controller.runWeight) + (sin(controller.time)).abs() * 3.0 * controller.runWeight;
     controller.skeleton.neck.setValues(0, -25 + bounce, 0);
 
+    // Update Head relative to Neck
+    if (controller.skeleton.head != null) {
+      // Offset head by 8 units up (-Y)
+      controller.skeleton.setHead(controller.skeleton.neck + v.Vector3(0, -8, 0));
+    }
+
     // 2. Shoulders & Hips (Relative to body)
     controller.skeleton.lShoulder = controller.skeleton.neck.clone();
     controller.skeleton.rShoulder = controller.skeleton.neck.clone();

@@ -18,26 +18,26 @@ class _StickmanPoseEditorState extends State<StickmanPoseEditor> {
   // Mapping of bone IDs to their StickmanNode objects
   late Map<String, StickmanNode> _nodes;
 
-  // View Parameters (Replaces InteractiveViewer for 3D)
+  // View Parameters
   double _rotationX = 0.0; // Pitch
   double _rotationY = 0.0; // Yaw (Turntable)
-  double _zoom = 2.0;      // Default Larger Zoom
+  double _zoom = 2.0;
   Offset _pan = Offset.zero;
 
   // Selection State
   String? _selectedNodeId;
 
+  // Axis Mode State
+  AxisMode _axisMode = AxisMode.none;
+
   @override
   void initState() {
     super.initState();
     _refreshNodeCache();
-
-    // Set to ManualMotionStrategy
     widget.controller.setStrategy(ManualMotionStrategy());
   }
 
   void _refreshNodeCache() {
-    // Rebuild local map from root traversal to ensure we have all current nodes
     final allNodes = <StickmanNode>[];
     void traverse(StickmanNode n) {
       allNodes.add(n);
@@ -48,7 +48,6 @@ class _StickmanPoseEditorState extends State<StickmanPoseEditor> {
   }
 
   // Coordinate Mapping
-  // Must match StickmanPainter.project logic
   Offset _toScreen(v.Vector3 vec, Size size) {
     return StickmanPainter.project(
       vec * widget.controller.scale,
@@ -60,77 +59,84 @@ class _StickmanPoseEditorState extends State<StickmanPoseEditor> {
     );
   }
 
-  void _updateBonePosition(String nodeId, Offset delta) {
+  void _updateBonePosition(String nodeId, Offset screenDelta) {
     if (!_nodes.containsKey(nodeId)) return;
 
     final node = _nodes[nodeId]!;
     final modelScale = widget.controller.scale;
     if (modelScale == 0) return;
 
-    // Apply Inverse Rotation to Delta
-    // We are dragging in Screen Space (DX, DY).
-    // We want World Space delta (WX, WY, WZ).
-    // The View Rotation was:
-    // X' = X cosY - Z sinY
-    // Z' = X sinY + Z cosY
-    // Y' = Y
-    // (Then pitch X...)
+    // Scale Factor converting World Units to Screen Pixels
+    final scaleFactor = modelScale * _zoom;
 
-    // This inverse is complex because we project 3D to 2D.
-    // Movement in Screen X corresponds to movement along the View Right vector.
-    // Movement in Screen Y corresponds to movement along the View Up vector.
-
-    // View Right Vector in World Space:
-    // Start with (1,0,0). Rotate Y(yaw) -> (cosY, 0, sinY). Rotate X(pitch) -> (cosY, 0, sinY) if Pitch is 0?
-    // Let's assume Pitch is small or handled simply.
-    // Ideally, we invert the rotation matrix.
-
-    // Simple approach:
-    // Rotate the delta vector (dx, dy, 0) by the Inverse View Rotation.
-    // Inverse Orbit Rotation:
-    // Un-pitch (X), then Un-yaw (Y).
-
-    // Let's construct a simple rotation logic inverse.
-    // Screen X corresponds to Camera Right.
-    // Screen Y corresponds to Camera Up.
-
-    // Camera Basis vectors in World Space:
-    // Right = (cos(-rotY), 0, -sin(-rotY)) = (cosY, 0, sinY) ? (Check signs)
-    // Up = ...
-
-    // Let's use VectorMath Matrix.
+    // Inverse View Rotation Matrix (Camera to World)
     final rotMatrix = v.Matrix4.identity()
       ..rotateX(_rotationX)
       ..rotateY(_rotationY);
-
-    // The view transform rotates World to Camera.
-    // So Camera to World is the Inverse.
     final invMatrix = v.Matrix4.inverted(rotMatrix);
 
-    // Screen Delta as a vector on the View Plane
-    final screenDelta = v.Vector3(delta.dx, delta.dy, 0);
+    if (_axisMode == AxisMode.none) {
+      // Free Move (Screen Plane -> View Plane)
+      // Screen X -> View Right -> World Vector
+      // Screen Y -> View Up -> World Vector
 
-    // Transform by Inverse
-    final worldDelta = invMatrix.transform3(screenDelta);
+      final delta3 = v.Vector3(screenDelta.dx, screenDelta.dy, 0);
+      final worldDelta = invMatrix.transform3(delta3);
 
-    // Scale adjustment
-    final scaleFactor = modelScale * _zoom;
+      node.position.x += worldDelta.x / scaleFactor;
+      node.position.y += worldDelta.y / scaleFactor;
+      node.position.z += worldDelta.z / scaleFactor;
 
-    node.position.x += worldDelta.x / scaleFactor;
-    node.position.y += worldDelta.y / scaleFactor;
-    node.position.z += worldDelta.z / scaleFactor;
+    } else {
+      // Axis Constrained Move
+      // We want to move along a specific World Axis (e.g. X: 1,0,0)
+      // We need to find how much the Screen Drag corresponds to movement along that axis.
+      // 1. Project the World Axis onto the Screen Vector.
+      // 2. Dot Product Screen Delta with Projected Axis Vector.
+
+      v.Vector3 axisDir;
+      if (_axisMode == AxisMode.x) axisDir = v.Vector3(1, 0, 0);
+      else if (_axisMode == AxisMode.y) axisDir = v.Vector3(0, 1, 0);
+      else axisDir = v.Vector3(0, 0, 1);
+
+      // Transform World Axis to View Space (Camera Relative Axis)
+      // We use rotMatrix (World -> Camera)
+      // We only rotate the direction, not translate.
+      // Actually, rotMatrix is 4x4.
+      final viewAxis = rotMatrix.transform3(axisDir.clone()); // Assuming pure rotation matrix
+
+      // Now we have the axis direction in View Space (X=Right, Y=Down, Z=Depth).
+      // We project this onto the Screen Plane (X, Y).
+      // Since it's orthographic, Screen X = View X, Screen Y = View Y.
+      final screenAxisDir = Offset(viewAxis.x, viewAxis.y);
+
+      // If axis is perpendicular to screen (pointing purely in Z), magnitude is 0.
+      double screenMag = screenAxisDir.distance;
+      if (screenMag < 0.001) return; // Cannot move this axis from this angle
+
+      // Normalize Screen Axis Direction
+      final screenAxisUnit = screenAxisDir / screenMag;
+
+      // Project Mouse Delta onto Screen Axis
+      double projection = screenDelta.dx * screenAxisUnit.dx + screenDelta.dy * screenAxisUnit.dy;
+
+      // Calculate World Movement Amount
+      // projection (pixels) = worldMove * scaleFactor * screenMag (foreshortening)
+      // worldMove = projection / (scaleFactor * screenMag)
+
+      double worldMove = projection / (scaleFactor * screenMag);
+
+      // Apply to Node
+      node.position.add(axisDir * worldMove);
+    }
   }
 
-  // Node Operations
   void _addNodeToSelected() {
     if (_selectedNodeId == null || !_nodes.containsKey(_selectedNodeId)) return;
-
     final parent = _nodes[_selectedNodeId]!;
     final newNodeId = 'node_${DateTime.now().millisecondsSinceEpoch}';
-    // Offset relative to parent in screen space? No, just world offset.
     final offset = v.Vector3(5, 5, 0);
     final newNode = StickmanNode(newNodeId, parent.position + offset);
-
     setState(() {
       parent.children.add(newNode);
       _refreshNodeCache();
@@ -140,7 +146,6 @@ class _StickmanPoseEditorState extends State<StickmanPoseEditor> {
 
   void _removeSelectedNode() {
      if (_selectedNodeId == null || _selectedNodeId == 'hip') return;
-
      StickmanNode? parent;
      for (var node in _nodes.values) {
        if (node.children.any((c) => c.id == _selectedNodeId)) {
@@ -148,7 +153,6 @@ class _StickmanPoseEditorState extends State<StickmanPoseEditor> {
          break;
        }
      }
-
      if (parent != null) {
        setState(() {
          parent!.children.removeWhere((c) => c.id == _selectedNodeId);
@@ -160,59 +164,20 @@ class _StickmanPoseEditorState extends State<StickmanPoseEditor> {
 
   @override
   Widget build(BuildContext context) {
-    _refreshNodeCache(); // Ensure sync before build
+    _refreshNodeCache();
 
     return LayoutBuilder(
       builder: (context, constraints) {
         final size = Size(constraints.maxWidth, constraints.maxHeight);
 
-        return Scaffold( // Use Scaffold for background color
+        return Scaffold(
           backgroundColor: Colors.grey[900],
           body: Stack(
             children: [
-              // Layer 1: Gesture Detector & Painter
+              // Layer 1: Gesture & Painter
               GestureDetector(
-                behavior: HitTestBehavior.opaque, // Catch all touches in background
-                onScaleStart: (details) {
-                  // No-op, just start
-                },
-                onScaleUpdate: (details) {
-                  setState(() {
-                    if (details.pointerCount == 1) {
-                      // One finger: Rotate
-                      // Sensitivity
-                      _rotationY -= details.focalPointDelta.dx * 0.01;
-                      _rotationX += details.focalPointDelta.dy * 0.01;
-                      // Clamp Pitch to avoid flipping?
-                      // _rotationX = _rotationX.clamp(-1.5, 1.5);
-                    } else {
-                      // Two fingers: Zoom (Scale) & Pan?
-                      // details.scale is relative to start of gesture.
-                      // We need relative to previous frame?
-                      // onScaleUpdate provides scale since start.
-                      // This is tricky without storing previousScale.
-                      // Let's use horizontalDrag/verticalDrag for Rotate if pointer==1?
-                      // onScaleUpdate covers everything.
-
-                      // Simple zoom logic:
-                      // We can just use the scale delta if we track it, OR just map scale directly.
-                      // But details.scale resets to 1.0 each gesture start? No, it accumulates.
-
-                      // Actually, let's just implement Zoom via scale delta:
-                      // But details.scale is "scale of this gesture".
-                      // We need `_zoom *= details.scaleDelta` equivalent.
-                      // `details.scale` is total scale since start.
-                      // We can assume small changes per frame? No.
-
-                      // Standard pattern:
-                      // Store `_baseZoom` on ScaleStart.
-                      // `_zoom = _baseZoom * details.scale`.
-                    }
-                  });
-                },
-                // Let's try simpler separate callbacks
+                behavior: HitTestBehavior.opaque,
                 onPanUpdate: (details) {
-                   // Single finger pan -> Rotate
                    setState(() {
                       _rotationY -= details.delta.dx * 0.01;
                       _rotationX += details.delta.dy * 0.01;
@@ -226,15 +191,17 @@ class _StickmanPoseEditorState extends State<StickmanPoseEditor> {
                      viewZoom: _zoom,
                      viewPan: _pan,
                      color: Colors.white,
+                     selectedNodeId: _selectedNodeId,
+                     axisMode: _axisMode,
                    ),
                    size: Size.infinite,
                 ),
               ),
 
-              // Zoom Slider (Alternative to Pinch for simplicity/robustness)
+              // Zoom Slider
               Positioned(
                 left: 20,
-                bottom: 100,
+                bottom: 150,
                 child: RotatedBox(
                   quarterTurns: 3,
                   child: SizedBox(
@@ -300,6 +267,40 @@ class _StickmanPoseEditorState extends State<StickmanPoseEditor> {
                       mainAxisSize: MainAxisSize.min,
                       crossAxisAlignment: CrossAxisAlignment.end,
                       children: [
+                        // Axis Controls
+                        Container(
+                          decoration: BoxDecoration(
+                            color: Colors.black54,
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: ToggleButtons(
+                            isSelected: [
+                              _axisMode == AxisMode.none,
+                              _axisMode == AxisMode.x,
+                              _axisMode == AxisMode.y,
+                              _axisMode == AxisMode.z,
+                            ],
+                            onPressed: (index) {
+                              setState(() {
+                                if (index == 0) _axisMode = AxisMode.none;
+                                else if (index == 1) _axisMode = AxisMode.x;
+                                else if (index == 2) _axisMode = AxisMode.y;
+                                else if (index == 3) _axisMode = AxisMode.z;
+                              });
+                            },
+                            color: Colors.white,
+                            selectedColor: Colors.amber,
+                            fillColor: Colors.white24,
+                            children: const [
+                              Padding(padding: EdgeInsets.symmetric(horizontal: 12), child: Text("Free")),
+                              Padding(padding: EdgeInsets.symmetric(horizontal: 12), child: Text("X", style: TextStyle(color: Colors.red))),
+                              Padding(padding: EdgeInsets.symmetric(horizontal: 12), child: Text("Y", style: TextStyle(color: Colors.green))),
+                              Padding(padding: EdgeInsets.symmetric(horizontal: 12), child: Text("Z", style: TextStyle(color: Colors.blue))),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(height: 16),
+
                          if (_selectedNodeId != null) ...[
                             FloatingActionButton.small(
                               onPressed: _addNodeToSelected,
@@ -336,7 +337,7 @@ class _StickmanPoseEditorState extends State<StickmanPoseEditor> {
     final skel = widget.controller.skeleton;
     final buffer = StringBuffer();
     String format(v.Vector3 v) => "${v.x.toStringAsFixed(1)}, ${v.y.toStringAsFixed(1)}, ${v.z.toStringAsFixed(1)}";
-    for(var name in ['hip','neck','lShoulder','rShoulder','lHip','rHip','lKnee','rKnee','lFoot','rFoot','lElbow','rElbow','lHand','rHand']) {
+    for(var name in ['hip','neck','head','lShoulder','rShoulder','lHip','rHip','lKnee','rKnee','lFoot','rFoot','lElbow','rElbow','lHand','rHand']) {
        if (_nodes.containsKey(name)) {
          buffer.writeln("..$name.setValues(${format(_nodes[name]!.position)})");
        }
