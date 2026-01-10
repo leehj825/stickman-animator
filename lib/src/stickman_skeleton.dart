@@ -43,6 +43,10 @@ class StickmanNode {
 class StickmanSkeleton {
   late StickmanNode root;
 
+  // Visual Properties
+  double headRadius = 6.0;
+  double strokeWidth = 3.0;
+
   // Cache for fast access to standard bones
   // Map ID -> Node
   final Map<String, StickmanNode> _nodes = {};
@@ -127,7 +131,6 @@ class StickmanSkeleton {
   v.Vector3 get neck => _nodes['neck']!.position;
   set neck(v.Vector3 v) => _nodes['neck']!.position.setFrom(v);
 
-  // New Head getter/setter (safe access)
   v.Vector3? get head => _nodes['head']?.position;
   void setHead(v.Vector3 v) => _nodes['head']?.position.setFrom(v);
 
@@ -170,13 +173,19 @@ class StickmanSkeleton {
 
   /// Returns a deep copy of the skeleton
   StickmanSkeleton clone() {
-    return StickmanSkeleton._fromRoot(root.clone());
+    final copy = StickmanSkeleton._fromRoot(root.clone());
+    copy.headRadius = headRadius;
+    copy.strokeWidth = strokeWidth;
+    return copy;
   }
 
   /// Linearly interpolates all bone vectors between this and other based on t (0.0 to 1.0).
   void lerp(StickmanSkeleton other, double t) {
-    // We assume structure is identical for lerp.
-    // If not, we only lerp matching IDs.
+    // Lerp properties
+    headRadius = headRadius + (other.headRadius - headRadius) * t;
+    strokeWidth = strokeWidth + (other.strokeWidth - strokeWidth) * t;
+
+    // Lerp bones
     void traverse(StickmanNode myNode) {
       if (other.nodes.containsKey(myNode.id)) {
         final target = other.nodes[myNode.id]!.position;
@@ -194,10 +203,23 @@ class StickmanSkeleton {
   }
 
   Map<String, dynamic> toJson() {
-    return root.toJson();
+    return {
+      'headRadius': headRadius,
+      'strokeWidth': strokeWidth,
+      'root': root.toJson(),
+    };
   }
 
   factory StickmanSkeleton.fromJson(Map<String, dynamic> json) {
-    return StickmanSkeleton._fromRoot(StickmanNode.fromJson(json));
+    // Handle both old format (root only) and new format (with properties)
+    if (json.containsKey('root')) {
+      final skel = StickmanSkeleton._fromRoot(StickmanNode.fromJson(json['root']));
+      if (json.containsKey('headRadius')) skel.headRadius = (json['headRadius'] as num).toDouble();
+      if (json.containsKey('strokeWidth')) skel.strokeWidth = (json['strokeWidth'] as num).toDouble();
+      return skel;
+    } else {
+      // Assume entire json is the root node (legacy compat)
+      return StickmanSkeleton._fromRoot(StickmanNode.fromJson(json));
+    }
   }
 }

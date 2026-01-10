@@ -86,12 +86,7 @@ class StickmanPainter extends CustomPainter {
     double sx = x * zoom;
     double sy = y * zoom;
 
-    // Apply Camera Height Offset (Vertical Pan)
-    // "vertically translate the entire stickman rendering... moving the 'camera' up/down"
-    // Moving camera UP means stickman moves DOWN. So we subtract offset?
-    // Or just add it to Y? Usually offset implies shift. Let's add it to the center or the y coord.
-    // If we move camera up (+Y), object appears lower (-Y).
-    // Let's assume heightOffset is a translation of the object.
+    // Apply Camera Height Offset
     sy += heightOffset;
 
     // Center and Pan
@@ -104,10 +99,15 @@ class StickmanPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     final skel = controller.skeleton;
+
+    // Use dynamic visual properties from skeleton
+    final strokeWidth = skel.strokeWidth * viewZoom * controller.scale;
+    final headRadius = skel.headRadius * viewZoom * controller.scale;
+
     final paint = Paint()
       ..color = color
       ..style = PaintingStyle.stroke
-      ..strokeWidth = 3.0 * viewZoom * controller.scale
+      ..strokeWidth = strokeWidth
       ..strokeCap = StrokeCap.round;
 
     final fillPaint = Paint()..color = color ..style = PaintingStyle.fill;
@@ -133,7 +133,7 @@ class StickmanPainter extends CustomPainter {
 
       // Special Draw for Head Node
       if (node.id == 'head') {
-        canvas.drawCircle(start, 6 * viewZoom * controller.scale, fillPaint);
+        canvas.drawCircle(start, headRadius, fillPaint);
       }
 
       for (var child in node.children) {
@@ -149,7 +149,7 @@ class StickmanPainter extends CustomPainter {
     // Legacy Support
     if (!skel.nodes.containsKey('head') && skel.nodes.containsKey('neck')) {
       Offset headCenter = toScreen(skel.neck + v.Vector3(0, -8, 0));
-      canvas.drawCircle(headCenter, 6 * viewZoom * controller.scale, fillPaint);
+      canvas.drawCircle(headCenter, headRadius, fillPaint);
     }
 
     // Draw Axis Constraints
@@ -235,27 +235,16 @@ class StickmanPainter extends CustomPainter {
       cameraHeightOffset
     );
 
-    // Draw Grid based on active plane
-    // Front View (Z-Axis): Project (x, y). Plane is XY. Z is depth.
-    // Side View (X-Axis): Project (z, y). Plane is ZY. X is depth.
-    // Top View (Y-Axis): Project (x, z). Plane is XZ. Y is depth.
-    // Free: Ground Plane (XZ).
-
     for (int i = 0; i <= steps; i++) {
       double v = -range + i * stepSize;
 
       if (cameraView == CameraView.front) {
-         // Grid on XY plane?
-         // Stickman uses Y=0 (hip) to Y=25 (feet).
-         // So XY grid at Z=0?
-         canvas.drawLine(p3(-range, v, 0), p3(range, v, 0), gridPaint); // Horizontal
-         canvas.drawLine(p3(v, -range, 0), p3(v, range, 0), gridPaint); // Vertical
+         canvas.drawLine(p3(-range, v, 0), p3(range, v, 0), gridPaint);
+         canvas.drawLine(p3(v, -range, 0), p3(v, range, 0), gridPaint);
       } else if (cameraView == CameraView.side) {
-         // Grid on ZY plane at X=0
          canvas.drawLine(p3(0, v, -range), p3(0, v, range), gridPaint);
          canvas.drawLine(p3(0, -range, v), p3(0, range, v), gridPaint);
       } else if (cameraView == CameraView.top || cameraView == CameraView.free) {
-         // Grid on XZ plane (Ground) at Y=25 (Feet level)
          canvas.drawLine(p3(-range, 25, v), p3(range, 25, v), gridPaint);
          canvas.drawLine(p3(v, 25, -range), p3(v, 25, range), gridPaint);
       }
@@ -264,6 +253,13 @@ class StickmanPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant StickmanPainter oldDelegate) {
+    // Add check for style properties changes if they are not deeply checked
+    // The controller is the same instance usually, but skeleton props might change.
+    // controller.skeleton is mutable. We rely on the parent (Editor) calling setState()
+    // to trigger this build, and CustomPainter will repaint if shouldRepaint returns true.
+    // Since we pass controller, we should assume it might have changed internally.
+    // Just returning true or checking params is standard.
+    // However, for optimization we check fields.
     return oldDelegate.cameraView != cameraView ||
            oldDelegate.viewRotationX != viewRotationX ||
            oldDelegate.viewRotationY != viewRotationY ||

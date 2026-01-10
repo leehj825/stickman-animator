@@ -179,6 +179,9 @@ class _StickmanPoseEditorState extends State<StickmanPoseEditor> {
   Widget build(BuildContext context) {
     _refreshNodeCache();
 
+    // UI Theme
+    final styleLabel = TextStyle(color: Colors.white70, fontSize: 10);
+
     return LayoutBuilder(
       builder: (context, constraints) {
         final size = Size(constraints.maxWidth, constraints.maxHeight);
@@ -191,7 +194,6 @@ class _StickmanPoseEditorState extends State<StickmanPoseEditor> {
               GestureDetector(
                 behavior: HitTestBehavior.opaque,
                 onPanUpdate: (details) {
-                   // Only rotate if Free mode
                    if (_cameraView == CameraView.free) {
                      setState(() {
                         _rotationY -= details.delta.dx * 0.01;
@@ -216,7 +218,7 @@ class _StickmanPoseEditorState extends State<StickmanPoseEditor> {
                 ),
               ),
 
-              // Handles (Same logic, mapped via _toScreen)
+              // Handles
               ..._nodes.values.map((node) {
                 final screenPos = _toScreen(node.position, size);
                 final isSelected = node.id == _selectedNodeId;
@@ -306,11 +308,11 @@ class _StickmanPoseEditorState extends State<StickmanPoseEditor> {
                     Positioned(
                       left: 10,
                       top: 200,
-                      bottom: 100,
+                      bottom: 150,
                       child: RotatedBox(
                         quarterTurns: 3,
                         child: SizedBox(
-                          width: 300,
+                          width: 200,
                           child: Slider(
                             value: _cameraHeight,
                             min: -200,
@@ -318,22 +320,6 @@ class _StickmanPoseEditorState extends State<StickmanPoseEditor> {
                             onChanged: (v) => setState(() => _cameraHeight = v),
                             label: "Height",
                           ),
-                        ),
-                      ),
-                    ),
-
-                    // Zoom Slider (Bottom Left)
-                    Positioned(
-                      left: 50,
-                      bottom: 20,
-                      child: SizedBox(
-                        width: 200,
-                        child: Slider(
-                          value: _zoom,
-                          min: 0.5,
-                          max: 5.0,
-                          onChanged: (v) => setState(() => _zoom = v),
-                          label: "Zoom",
                         ),
                       ),
                     ),
@@ -346,6 +332,43 @@ class _StickmanPoseEditorState extends State<StickmanPoseEditor> {
                         mainAxisSize: MainAxisSize.min,
                         crossAxisAlignment: CrossAxisAlignment.end,
                         children: [
+                           // Style Sliders
+                           Container(
+                             padding: const EdgeInsets.all(8),
+                             margin: const EdgeInsets.only(bottom: 10),
+                             decoration: BoxDecoration(
+                               color: Colors.black54,
+                               borderRadius: BorderRadius.circular(8)
+                             ),
+                             child: Column(
+                               crossAxisAlignment: CrossAxisAlignment.end,
+                               children: [
+                                 Text("Thickness: ${widget.controller.skeleton.strokeWidth.toStringAsFixed(1)}", style: styleLabel),
+                                 SizedBox(
+                                   width: 120,
+                                   height: 30,
+                                   child: Slider(
+                                     value: widget.controller.skeleton.strokeWidth,
+                                     min: 1.0,
+                                     max: 10.0,
+                                     onChanged: (v) => setState(() => widget.controller.skeleton.strokeWidth = v),
+                                   ),
+                                 ),
+                                 Text("Head Size: ${widget.controller.skeleton.headRadius.toStringAsFixed(1)}", style: styleLabel),
+                                 SizedBox(
+                                   width: 120,
+                                   height: 30,
+                                   child: Slider(
+                                     value: widget.controller.skeleton.headRadius,
+                                     min: 2.0,
+                                     max: 15.0,
+                                     onChanged: (v) => setState(() => widget.controller.skeleton.headRadius = v),
+                                   ),
+                                 ),
+                               ],
+                             ),
+                           ),
+
                            if (_selectedNodeId != null) ...[
                               FloatingActionButton.small(
                                 heroTag: "add",
@@ -369,6 +392,22 @@ class _StickmanPoseEditorState extends State<StickmanPoseEditor> {
                             child: const Text("Copy Pose"),
                           ),
                         ],
+                      ),
+                    ),
+
+                    // Zoom Slider (Bottom Left)
+                    Positioned(
+                      left: 50,
+                      bottom: 20,
+                      child: SizedBox(
+                        width: 200,
+                        child: Slider(
+                          value: _zoom,
+                          min: 0.5,
+                          max: 5.0,
+                          onChanged: (v) => setState(() => _zoom = v),
+                          label: "Zoom",
+                        ),
                       ),
                     ),
                   ],
@@ -425,11 +464,18 @@ class _StickmanPoseEditorState extends State<StickmanPoseEditor> {
     final skel = widget.controller.skeleton;
     final buffer = StringBuffer();
     String format(v.Vector3 v) => "${v.x.toStringAsFixed(1)}, ${v.y.toStringAsFixed(1)}, ${v.z.toStringAsFixed(1)}";
+
+    buffer.writeln("static final StickmanSkeleton myPose = StickmanSkeleton()");
+    buffer.writeln("  ..headRadius = ${skel.headRadius.toStringAsFixed(1)}");
+    buffer.writeln("  ..strokeWidth = ${skel.strokeWidth.toStringAsFixed(1)}");
+
     for(var name in ['hip','neck','head','lShoulder','rShoulder','lHip','rHip','lKnee','rKnee','lFoot','rFoot','lElbow','rElbow','lHand','rHand']) {
        if (_nodes.containsKey(name)) {
-         buffer.writeln("..$name.setValues(${format(_nodes[name]!.position)})");
+         buffer.writeln("  ..$name.setValues(${format(_nodes[name]!.position)})");
        }
     }
+    buffer.writeln("  ;");
+
     buffer.writeln("\n// Full Tree JSON:");
     buffer.writeln(skel.toJson().toString());
 
