@@ -144,37 +144,6 @@ class _StickmanPoseEditorState extends State<StickmanPoseEditor> {
       node.position.add(axisDir * worldMove);
   }
 
-  void _addNodeToSelected() {
-    if (_selectedNodeId == null || !_nodes.containsKey(_selectedNodeId)) return;
-    final parent = _nodes[_selectedNodeId]!;
-    final newNodeId = 'node_${DateTime.now().millisecondsSinceEpoch}';
-    final offset = v.Vector3(5, 5, 0);
-    final newNode = StickmanNode(newNodeId, parent.position + offset);
-    setState(() {
-      parent.children.add(newNode);
-      _refreshNodeCache();
-      _selectedNodeId = newNodeId;
-    });
-  }
-
-  void _removeSelectedNode() {
-     if (_selectedNodeId == null || _selectedNodeId == 'hip') return;
-     StickmanNode? parent;
-     for (var node in _nodes.values) {
-       if (node.children.any((c) => c.id == _selectedNodeId)) {
-         parent = node;
-         break;
-       }
-     }
-     if (parent != null) {
-       setState(() {
-         parent!.children.removeWhere((c) => c.id == _selectedNodeId);
-         _selectedNodeId = null;
-         _refreshNodeCache();
-       });
-     }
-  }
-
   @override
   Widget build(BuildContext context) {
     _refreshNodeCache();
@@ -274,10 +243,10 @@ class _StickmanPoseEditorState extends State<StickmanPoseEditor> {
                          ),
                          child: Column(
                            children: [
+                             _viewButton("Free", CameraView.free),
                              _viewButton("View X", CameraView.side),
                              _viewButton("View Y", CameraView.top),
                              _viewButton("View Z", CameraView.front),
-                             _viewButton("Free", CameraView.free),
                            ],
                          ),
                       ),
@@ -324,74 +293,58 @@ class _StickmanPoseEditorState extends State<StickmanPoseEditor> {
                       ),
                     ),
 
+                    // Line and Head sliders (Right Edge Vertical Sliders)
+                    Positioned(
+                      right: 10,
+                      top: 200,
+                      bottom: 150,
+                      child: Row(
+                        children: [
+                          Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Text("line", style: styleLabel),
+                              Expanded(
+                                child: RotatedBox(
+                                  quarterTurns: 3,
+                                  child: Slider(
+                                    value: widget.controller.skeleton.strokeWidth,
+                                    min: 1.0,
+                                    max: 10.0,
+                                    onChanged: (v) => setState(() => widget.controller.skeleton.strokeWidth = v),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                          Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Text("head", style: styleLabel),
+                              Expanded(
+                                child: RotatedBox(
+                                  quarterTurns: 3,
+                                  child: Slider(
+                                    value: widget.controller.skeleton.headRadius,
+                                    min: 2.0,
+                                    max: 15.0,
+                                    onChanged: (v) => setState(() => widget.controller.skeleton.headRadius = v),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+
                     // Node Operations (Bottom Right)
                     Positioned(
                       bottom: 20,
                       right: 20,
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        crossAxisAlignment: CrossAxisAlignment.end,
-                        children: [
-                           // Style Sliders
-                           Container(
-                             padding: const EdgeInsets.all(8),
-                             margin: const EdgeInsets.only(bottom: 10),
-                             decoration: BoxDecoration(
-                               color: Colors.black54,
-                               borderRadius: BorderRadius.circular(8)
-                             ),
-                             child: Column(
-                               crossAxisAlignment: CrossAxisAlignment.end,
-                               children: [
-                                 Text("Thickness: ${widget.controller.skeleton.strokeWidth.toStringAsFixed(1)}", style: styleLabel),
-                                 SizedBox(
-                                   width: 120,
-                                   height: 30,
-                                   child: Slider(
-                                     value: widget.controller.skeleton.strokeWidth,
-                                     min: 1.0,
-                                     max: 10.0,
-                                     onChanged: (v) => setState(() => widget.controller.skeleton.strokeWidth = v),
-                                   ),
-                                 ),
-                                 Text("Head Size: ${widget.controller.skeleton.headRadius.toStringAsFixed(1)}", style: styleLabel),
-                                 SizedBox(
-                                   width: 120,
-                                   height: 30,
-                                   child: Slider(
-                                     value: widget.controller.skeleton.headRadius,
-                                     min: 2.0,
-                                     max: 15.0,
-                                     onChanged: (v) => setState(() => widget.controller.skeleton.headRadius = v),
-                                   ),
-                                 ),
-                               ],
-                             ),
-                           ),
-
-                           if (_selectedNodeId != null) ...[
-                              FloatingActionButton.small(
-                                heroTag: "add",
-                                onPressed: _addNodeToSelected,
-                                child: const Icon(Icons.add),
-                                tooltip: "Add Child Node",
-                              ),
-                              const SizedBox(height: 8),
-                              if (_selectedNodeId != 'hip')
-                              FloatingActionButton.small(
-                                heroTag: "del",
-                                onPressed: _removeSelectedNode,
-                                backgroundColor: Colors.red,
-                                child: const Icon(Icons.delete),
-                                tooltip: "Remove Node",
-                              ),
-                              const SizedBox(height: 16),
-                           ],
-                           ElevatedButton(
-                            onPressed: _copyPoseToClipboard,
-                            child: const Text("Copy Pose"),
-                          ),
-                        ],
+                      child: ElevatedButton(
+                        onPressed: _copyPoseToClipboard,
+                        child: const Text("Copy Pose"),
                       ),
                     ),
 
@@ -404,7 +357,7 @@ class _StickmanPoseEditorState extends State<StickmanPoseEditor> {
                         child: Slider(
                           value: _zoom,
                           min: 0.5,
-                          max: 5.0,
+                          max: 10.0,
                           onChanged: (v) => setState(() => _zoom = v),
                           label: "Zoom",
                         ),
