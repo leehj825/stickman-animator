@@ -27,8 +27,7 @@ class StickmanPersistence {
         String? outputFile = await FilePicker.platform.saveFile(
           dialogTitle: 'Save Project',
           fileName: fileName,
-          type: FileType.custom,
-          allowedExtensions: ['stickman_proj'],
+          type: FileType.any,
         );
         if (outputFile != null) {
           final file = File(outputFile);
@@ -45,8 +44,7 @@ class StickmanPersistence {
   static Future<List<StickmanClip>?> loadProject() async {
     try {
       FilePickerResult? result = await FilePicker.platform.pickFiles(
-        type: FileType.custom,
-        allowedExtensions: ['stickman_proj', 'json'],
+        type: FileType.any,
         withData: true,
       );
 
