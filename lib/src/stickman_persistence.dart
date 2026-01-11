@@ -36,11 +36,24 @@ class StickmanPersistence {
       FilePickerResult? result = await FilePicker.platform.pickFiles(
         type: FileType.custom,
         allowedExtensions: ['stickman', 'json'],
+        withData: true, // Ensure bytes are loaded if path is not available
       );
 
-      if (result != null && result.files.single.path != null) {
-        File file = File(result.files.single.path!);
-        String content = await file.readAsString();
+      if (result != null) {
+        String content;
+
+        if (result.files.single.bytes != null) {
+          // Web or restricted access where bytes are provided directly
+          content = utf8.decode(result.files.single.bytes!);
+        } else if (result.files.single.path != null) {
+          // Mobile/Desktop with file path access
+          File file = File(result.files.single.path!);
+          content = await file.readAsString();
+        } else {
+          print('Error: No file path or bytes available.');
+          return null;
+        }
+
         Map<String, dynamic> jsonMap = jsonDecode(content);
         return StickmanClip.fromJson(jsonMap);
       } else {
