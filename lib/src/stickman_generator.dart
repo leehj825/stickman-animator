@@ -21,10 +21,10 @@ class StickmanGenerator {
      }
   }
 
-  // --- 1. MARATHON RUN ---
+  // --- 1. REFINED MARATHON RUN (Organic & Fluid) ---
   static StickmanClip generateRun(StickmanSkeleton? style) {
     List<StickmanKeyframe> frames = [];
-    int totalFrames = 26;
+    int totalFrames = 24;
 
     for (int i = 0; i < totalFrames; i++) {
       double t = i / totalFrames;
@@ -33,17 +33,30 @@ class StickmanGenerator {
       StickmanSkeleton pose = StickmanSkeleton();
       _applyStyle(pose, style);
 
-      // Hips & Spine
+      // A. Hips & Spine Dynamics
+      // vertical bounce (lowest when foot plants)
       pose.hip.y = cos(angle * 2) * 1.5;
-      pose.neck.setValues(0, -25 + pose.hip.y, 3); // Z=3 slight lean
 
-      // Arms & Legs (Same Marathon Logic)
-      _setMarathonArm(pose, isLeft: true, angle: angle);
-      _setMarathonArm(pose, isLeft: false, angle: angle + pi);
-      _setMarathonLeg(pose, isLeft: true, angle: angle);
-      _setMarathonLeg(pose, isLeft: false, angle: angle + pi);
+      // Hip Twist: As right leg goes forward, rotate hips left (Yaw)
+      double hipTwist = sin(angle) * 0.15;
+      _rotateY(pose.hip, hipTwist);
 
-      // Fix Head
+      // Spine Counter-Twist: Shoulders rotate OPPOSITE to hips
+      pose.neck.setValues(0, -25 + pose.hip.y, 4); // Forward lean Z=4
+      _rotateY(pose.neck, -hipTwist * 1.5); // Counter-rotate neck
+
+      // B. Arms (Active Swing)
+      // Left Arm (Phase 0)
+      _setActiveArm(pose, isLeft: true, angle: angle);
+      // Right Arm (Phase PI)
+      _setActiveArm(pose, isLeft: false, angle: angle + pi);
+
+      // C. Legs (Smooth Arc)
+      // Left Leg
+      _setSmoothLeg(pose, isLeft: true, angle: angle);
+      // Right Leg
+      _setSmoothLeg(pose, isLeft: false, angle: angle + pi);
+
       _updateHead(pose);
 
       frames.add(StickmanKeyframe(pose: pose, frameIndex: i));
@@ -253,29 +266,74 @@ class StickmanGenerator {
     return StickmanClip(name: "Jump", keyframes: frames, fps: 30, isLooping: false);
   }
 
-  // --- HELPERS (Keep existing) ---
-  static void _setMarathonArm(StickmanSkeleton pose, {required bool isLeft, required double angle}) {
-     double swing = sin(angle) * 0.6;
-     v.Vector3 neck = pose.neck;
-     double side = isLeft ? -6 : 6;
-     v.Vector3 elbow = neck + v.Vector3(side, 12, swing * 5);
-     v.Vector3 hand = elbow + v.Vector3(0, 8, 8 + swing * 8);
-     if(isLeft) { pose.lElbow=elbow; pose.lHand=hand; }
-     else { pose.rElbow=elbow; pose.rHand=hand; }
+  // --- HELPERS FOR REFINED MOVEMENT ---
+
+  static void _rotateY(v.Vector3 vec, double angle) {
+    double cosA = cos(angle);
+    double sinA = sin(angle);
+    double x = vec.x;
+    double z = vec.z;
+    vec.x = x * cosA + z * sinA;
+    vec.z = -x * sinA + z * cosA;
   }
 
-  static void _setMarathonLeg(StickmanSkeleton pose, {required bool isLeft, required double angle}) {
-     double hipY = pose.hip.y;
+  static void _setSmoothLeg(StickmanSkeleton pose, {required bool isLeft, required double angle}) {
      double side = isLeft ? -3 : 3;
-     double footZ = sin(angle) * 12;
+
+     // 1. Stride (Forward/Back) - Sine wave
+     double stride = sin(angle) * 13;
+
+     // 2. Lift (Up/Down) - "Egg" shape trajectory
+     // We want the foot low during the "back" phase (push off)
+     // And high during the "forward" phase (swing)
+     double cosVal = cos(angle); // +1 is Forward Swing, -1 is Back Push
      double footY = 24;
-     if (cos(angle) > 0) footY -= sin(angle) * 4;
-     v.Vector3 hip = pose.hip + v.Vector3(side, 0, 0);
-     v.Vector3 foot = v.Vector3(side, footY, footZ);
-     v.Vector3 mid = (hip + foot) * 0.5;
-     mid.z += 6;
-     if(isLeft) { pose.lKnee=mid; pose.lFoot=foot; }
-     else { pose.rKnee=mid; pose.rFoot=foot; }
+
+     // Smooth Lift Logic:
+     if (cosVal > 0) {
+        // Swing Phase: Lift foot high to clear ground
+        footY -= cosVal * 5.0;
+        // Add extra "Knee Drive" pop at the peak
+        footY -= max(0.0, sin(angle + pi/4)) * 2;
+     } else {
+        // Stance/Push Phase: Keep foot flat/low
+        footY += cosVal * 0.5; // Slight dip
+     }
+
+     // Apply rotation to start/end points based on Hip Twist (approx)
+     v.Vector3 hipPos = pose.hip + v.Vector3(side, 0, 0);
+     v.Vector3 footPos = v.Vector3(side, footY, stride);
+
+     // IK Knee Solver
+     v.Vector3 mid = (hipPos + footPos) * 0.5;
+     mid.z += 8; // Knee bends forward
+
+     if(isLeft) { pose.lKnee=mid; pose.lFoot=footPos; }
+     else { pose.rKnee=mid; pose.rFoot=footPos; }
+  }
+
+  static void _setActiveArm(StickmanSkeleton pose, {required bool isLeft, required double angle}) {
+     v.Vector3 neck = pose.neck;
+     double side = isLeft ? -6 : 6;
+
+     // Swing angle
+     double swing = sin(angle) * 0.7;
+
+     // DYNAMIC ELBOW:
+     // When arm swings forward (swing > 0), bend elbow MORE (tuck).
+     // When arm swings back (swing < 0), straighten elbow slightly.
+     double elbowBendOffset = max(0.0, swing) * 4.0;
+
+     // Elbow Position
+     // Note: Y is Down.
+     v.Vector3 elbow = neck + v.Vector3(side, 10 - (elbowBendOffset*0.2), swing * 8);
+
+     // Hand Position
+     // Forearm swings relative to elbow
+     v.Vector3 hand = elbow + v.Vector3(0, 10, 5 + swing * 5 + elbowBendOffset);
+
+     if(isLeft) { pose.lElbow=elbow; pose.lHand=hand; }
+     else { pose.rElbow=elbow; pose.rHand=hand; }
   }
 
   static double _lerp(double a, double b, double t) => a + (b - a) * t;
