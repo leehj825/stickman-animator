@@ -16,16 +16,29 @@ class StickmanGenerator {
   // Helper to attach Head to Neck
   static void _updateHead(StickmanSkeleton pose) {
      if(pose.head != null) {
-       // Head follows neck rotation/position
-       // Default offset (0, -7.3, 0) relative to neck
        pose.setHead(pose.neck + v.Vector3(0, -7.3, 0));
      }
   }
 
-  // --- 1. REFINED MARATHON RUN (Asymmetrical Arms) ---
+  // --- 1. REFINED MARATHON RUN (Dynamic Lengths) ---
   static StickmanClip generateRun(StickmanSkeleton? style) {
     List<StickmanKeyframe> frames = [];
     int totalFrames = 24;
+
+    // MEASURE THE RIG (Dynamic Proportions)
+    double legLen = 13.0; // Default fallback
+    double armLen = 10.0; // Default fallback
+
+    if (style != null) {
+      // Measure thigh (Hip to Knee)
+      legLen = style.hip.distanceTo(style.rKnee);
+      // Measure arm (Neck to Elbow approx, or Elbow to Hand)
+      // Since Arms attach to Neck, Neck->Elbow is the upper arm.
+      armLen = style.neck.distanceTo(style.rElbow);
+    }
+
+    // Scale stride based on leg length
+    double strideScale = legLen / 13.0;
 
     for (int i = 0; i < totalFrames; i++) {
       double t = i / totalFrames;
@@ -35,47 +48,51 @@ class StickmanGenerator {
       _applyStyle(pose, style);
 
       // A. Hips & Spine
-      pose.hip.y = cos(angle * 2) * 1.5; // Bounce
-
-      // Twist Hips
+      pose.hip.y = cos(angle * 2) * 1.5;
       double hipTwist = sin(angle) * 0.15;
       _rotateY(pose.hip, hipTwist);
 
-      // Lean & Counter-Twist Spine
       pose.neck.setValues(0, -25 + pose.hip.y, 4);
       _rotateY(pose.neck, -hipTwist * 1.5);
 
-      // B. Arms (Opposite & Biased Back)
-      // Left Leg uses 'angle'. So Left Arm must be 'angle + pi'
-      _setActiveArm(pose, isLeft: true, angle: angle + pi);
-
-      // Right Leg uses 'angle + pi'. So Right Arm must be 'angle'
-      _setActiveArm(pose, isLeft: false, angle: angle);
+      // B. Arms (Opposite)
+      _setActiveArm(pose, isLeft: true, angle: angle + pi, length: armLen);
+      _setActiveArm(pose, isLeft: false, angle: angle, length: armLen);
 
       // C. Legs
-      _setSmoothLeg(pose, isLeft: true, angle: angle);
-      _setSmoothLeg(pose, isLeft: false, angle: angle + pi);
+      _setSmoothLeg(pose, isLeft: true, angle: angle, length: legLen, strideScale: strideScale);
+      _setSmoothLeg(pose, isLeft: false, angle: angle + pi, length: legLen, strideScale: strideScale);
 
       _updateHead(pose);
-
       frames.add(StickmanKeyframe(pose: pose, frameIndex: i));
     }
     return StickmanClip(name: "Run", keyframes: frames, fps: 30, isLooping: true);
   }
 
-  // --- 2. ROUNDHOUSE KICK (Fixed Tracking & Height) ---
+  // --- 2. ROUNDHOUSE KICK (Dynamic Lengths) ---
   static StickmanClip generateKick(StickmanSkeleton? style) {
     List<StickmanKeyframe> frames = [];
     int totalFrames = 34;
-    const double thighLen = 13.0;
-    const double shinLen = 13.0;
+
+    // Dynamic Lengths
+    double thighLen = 13.0;
+    double shinLen = 13.0;
+    if (style != null) {
+      thighLen = style.hip.distanceTo(style.rKnee);
+      shinLen = style.rKnee.distanceTo(style.rFoot);
+    }
 
     // Stance
     StickmanSkeleton stance = StickmanSkeleton();
+    _applyStyle(stance, style); // Apply style FIRST so we can clone if needed
+    if (style != null) {
+       // Ideally we should base stance on the user's rig structure
+       // But kick requires specific stance. We just set offsets relative to standard.
+       // We'll trust the math below to use the lengths we captured.
+    }
     stance.lFoot.z = 5; stance.rFoot.z = -5;
-    // Arms relative to body initially (approx)
     stance.lHand.setValues(-5, -15, 8); stance.rHand.setValues(5, -15, 5);
-    _applyStyle(stance, style);
+
 
     for (int i = 0; i < totalFrames; i++) {
       double t = i / totalFrames;
@@ -83,116 +100,82 @@ class StickmanGenerator {
       _applyStyle(pose, style);
 
       if (t < 0.3) {
-        // --- PHASE 1: CHAMBER ---
+        // PHASE 1: CHAMBER
         double subT = t / 0.3;
-
-        // Lean Back
         pose.hip.x = _lerp(0, -5, subT);
         pose.neck.x = _lerp(0, -15, subT);
         pose.neck.z = _lerp(0, -5, subT);
 
-        // Arms Follow Body
         pose.lHand = pose.neck + v.Vector3(-8, 5, 10);
         pose.rHand = pose.neck + v.Vector3(8, 5, 2);
-        // Simple IK for Elbows
-        pose.lElbow = (pose.neck + pose.lHand) * 0.5 + v.Vector3(-5, 0, -5);
-        pose.rElbow = (pose.neck + pose.rHand) * 0.5 + v.Vector3(5, 0, -5);
 
-        // Lift Knee (FK)
+        // Lift Knee (FK using thighLen)
         double thighPitch = _lerp(0, -pi/2 + 0.2, subT);
         double thighYaw = _lerp(0, pi/2, subT);
-
         v.Vector3 kneeOffset = _sphericalToCartesian(thighLen, thighPitch, thighYaw);
         pose.rKnee = pose.hip + kneeOffset;
 
-        // Tuck Foot
+        // Tuck Foot (FK using shinLen)
         double shinPitch = _lerp(0, pi * 0.8, subT);
         v.Vector3 footOffset = _sphericalToCartesian(shinLen, thighPitch + shinPitch, thighYaw);
         pose.rFoot = pose.rKnee + footOffset;
 
       } else if (t < 0.5) {
-        // --- PHASE 2: EXTENSION (Snap) ---
+        // PHASE 2: EXTENSION
         double subT = (t - 0.3) / 0.2;
+        pose.hip.x = -5; pose.neck.x = -20;
+        pose.lHand = pose.neck + v.Vector3(-8, 5, 10); pose.rHand = pose.neck + v.Vector3(8, 0, 5);
 
-        pose.hip.x = -5;
-        pose.neck.x = -20; // More lean for high kick
-
-        // Arms Follow Body
-        pose.lHand = pose.neck + v.Vector3(-8, 5, 10);
-        pose.rHand = pose.neck + v.Vector3(8, 0, 5);
-        pose.lElbow = (pose.neck + pose.lHand) * 0.5 + v.Vector3(-5, 0, -5);
-        pose.rElbow = (pose.neck + pose.rHand) * 0.5 + v.Vector3(5, 0, -5);
-
-        // Thigh
         double thighYaw = _lerp(pi/2, pi * 0.7, subT);
-        // HIGHER TARGET: -pi/2 - 0.4 (Aiming up)
         double thighPitch = -pi/2 - 0.4;
-
         v.Vector3 kneeOffset = _sphericalToCartesian(thighLen, thighPitch, thighYaw);
         pose.rKnee = pose.hip + kneeOffset;
 
-        // Shin Snap
         double shinPitch = _lerp(pi * 0.8, 0.0, subT);
         v.Vector3 footOffset = _sphericalToCartesian(shinLen, thighPitch + shinPitch, thighYaw);
         pose.rFoot = pose.rKnee + footOffset;
 
       } else if (t < 0.7) {
-        // --- PHASE 3: RECOIL ---
+        // PHASE 3: RECOIL
         double subT = (t - 0.5) / 0.2;
+        pose.hip.x = -5; pose.neck.x = -18;
+        pose.lHand = pose.neck + v.Vector3(-8, 5, 10); pose.rHand = pose.neck + v.Vector3(8, 2, 5);
 
-        pose.hip.x = -5;
-        pose.neck.x = -18;
-
-        pose.lHand = pose.neck + v.Vector3(-8, 5, 10);
-        pose.rHand = pose.neck + v.Vector3(8, 2, 5);
-        pose.lElbow = (pose.neck + pose.lHand) * 0.5 + v.Vector3(-5, 0, -5);
-        pose.rElbow = (pose.neck + pose.rHand) * 0.5 + v.Vector3(5, 0, -5);
-
-        // Keep knee up
         double thighYaw = pi * 0.7;
-        double thighPitch = _lerp(-pi/2 - 0.4, -pi/4, subT); // Drop slightly
-
+        double thighPitch = _lerp(-pi/2 - 0.4, -pi/4, subT);
         v.Vector3 kneeOffset = _sphericalToCartesian(thighLen, thighPitch, thighYaw);
         pose.rKnee = pose.hip + kneeOffset;
 
-        // Fold foot back
         double shinPitch = _lerp(0.0, pi * 0.9, subT);
         v.Vector3 footOffset = _sphericalToCartesian(shinLen, thighPitch + shinPitch, thighYaw);
         pose.rFoot = pose.rKnee + footOffset;
 
       } else {
-        // --- PHASE 4: RETURN ---
+        // PHASE 4: RETURN
         double subT = (t - 0.7) / 0.3;
+        pose.hip.x = _lerp(-5, 0, subT); pose.neck.x = _lerp(-18, 0, subT);
 
-        pose.hip.x = _lerp(-5, 0, subT);
-        pose.neck.x = _lerp(-18, 0, subT);
-
-        // Arms return to neutral
         pose.lHand = _lerpVector(pose.neck + v.Vector3(-8, 5, 10), pose.neck + v.Vector3(-10, 15, 0), subT);
         pose.rHand = _lerpVector(pose.neck + v.Vector3(8, 2, 5), pose.neck + v.Vector3(10, 15, 0), subT);
-        pose.lElbow = (pose.neck + pose.lHand) * 0.5 + v.Vector3(-5, 0, -5);
-        pose.rElbow = (pose.neck + pose.rHand) * 0.5 + v.Vector3(5, 0, -5);
 
         // Land
-        v.Vector3 landingKnee = pose.hip + v.Vector3(3, 12, 0);
-        v.Vector3 landingFoot = landingKnee + v.Vector3(3, 12, 0);
-        v.Vector3 recoilKnee = pose.hip + _sphericalToCartesian(thighLen, -pi/4, pi * 0.7);
+        v.Vector3 landingKnee = pose.hip + v.Vector3(3, thighLen*0.9, 0);
+        v.Vector3 landingFoot = landingKnee + v.Vector3(3, shinLen*0.9, 0);
 
+        v.Vector3 recoilKnee = pose.hip + _sphericalToCartesian(thighLen, -pi/4, pi * 0.7);
         pose.rKnee = _lerpVector(recoilKnee, landingKnee, subT);
-        pose.rFoot = _lerpVector(pose.rKnee + v.Vector3(0,10,0), landingFoot, subT);
+        pose.rFoot = _lerpVector(pose.rKnee + v.Vector3(0,shinLen*0.8,0), landingFoot, subT);
       }
 
-      // Update Head to stay balanced
       if(pose.head != null) {
          pose.setHead(pose.neck + v.Vector3(pose.neck.x * -0.2, -7.3, 0));
       }
-
       frames.add(StickmanKeyframe(pose: pose, frameIndex: i));
     }
     return StickmanClip(name: "Kick", keyframes: frames, fps: 30, isLooping: false);
   }
 
-  // --- 3. SQUAT JUMP (Smoother Transition) ---
+  // --- 3. SQUAT JUMP (Dynamic Lengths) ---
   static StickmanClip generateJump(StickmanSkeleton? style) {
     List<StickmanKeyframe> frames = [];
     int totalFrames = 30;
@@ -213,59 +196,40 @@ class StickmanGenerator {
         // SQUAT
         double subT = t / 0.3;
         double squash = sin(subT * pi) * 12;
-
         pose.hip.y += squash;
         double lean = squash * 0.5;
         pose.neck.setValues(0, pose.hip.y - 25 + (squash * 0.5), lean);
 
-        // Arms back (Relative)
+        // Arms relative to neck
         double armPull = sin(subT * pi) * 10;
         pose.lElbow = pose.neck + v.Vector3(-6, 7.5, -armPull);
-        pose.lHand.setValues(-8, pose.neck.y + 10, -5);
         pose.rElbow = pose.neck + v.Vector3(6, 7.5, -armPull);
-        pose.rHand.setValues(8, pose.neck.y + 10, -5);
+        pose.lHand.setValues(-8, pose.neck.y + 10, -5); pose.rHand.setValues(8, pose.neck.y + 10, -5);
 
+        // Knees
         double kneeY = (pose.hip.y + 24) * 0.5;
         pose.lKnee = v.Vector3(-4.1 - (3 * subT), kneeY, 0);
         pose.rKnee = v.Vector3(5.0 + (3 * subT), kneeY, 0);
 
       } else if (t < 0.5) {
-        // LAUNCH (t=0.3 to 0.5)
+        // LAUNCH
         pose.hip.y -= jumpY;
         pose.neck.setValues(0, pose.hip.y - 25, 0);
-
-        // Elbows tight
-        pose.lElbow = pose.neck + v.Vector3(-6, 7.5, 5);
-        pose.rElbow = pose.neck + v.Vector3(6, 7.5, 5);
-        // Hands low
-        pose.lHand.setValues(-8, pose.neck.y + 25, 10);
-        pose.rHand.setValues(8, pose.neck.y + 25, 10);
-
+        pose.lElbow = pose.neck + v.Vector3(-6, 7.5, 5); pose.rElbow = pose.neck + v.Vector3(6, 7.5, 5);
+        pose.lHand.setValues(-8, pose.neck.y + 25, 10); pose.rHand.setValues(8, pose.neck.y + 25, 10);
         pose.lKnee.y = pose.hip.y + 20; pose.lFoot.y = pose.hip.y + 35;
         pose.rKnee.y = pose.hip.y + 20; pose.rFoot.y = pose.hip.y + 35;
 
       } else if (t < 0.8) {
-        // FALL (t=0.5 to 0.8)
-        // Transition arms smoothly from Launch pos
+        // FALL
         double subT = (t - 0.5) / 0.3;
-
         pose.hip.y -= jumpY;
         pose.neck.setValues(0, pose.hip.y - 25, 0);
-
-        // Interpolate Elbows so they don't pop
-        // Launch: Z=5. Fall Target: Z=0.
         double elbowZ = _lerp(5, 0, subT);
-        pose.lElbow = pose.neck + v.Vector3(-6, 7.5, elbowZ);
-        pose.rElbow = pose.neck + v.Vector3(6, 7.5, elbowZ);
-
-        // Interpolate Hands
-        // Launch: neck.y+25. Fall Target: neck.y+20.
+        pose.lElbow = pose.neck + v.Vector3(-6, 7.5, elbowZ); pose.rElbow = pose.neck + v.Vector3(6, 7.5, elbowZ);
         double handYOffset = _lerp(25, 20, subT);
-        pose.lHand.y = pose.neck.y + handYOffset;
-        pose.rHand.y = pose.neck.y + handYOffset;
+        pose.lHand.y = pose.neck.y + handYOffset; pose.rHand.y = pose.neck.y + handYOffset;
         pose.lHand.x = -8; pose.rHand.x = 8;
-
-        // Legs reaching
         pose.lKnee.y = pose.hip.y + 15; pose.lFoot.y = pose.hip.y + 30;
         pose.rKnee.y = pose.hip.y + 15; pose.rFoot.y = pose.hip.y + 30;
 
@@ -275,34 +239,37 @@ class StickmanGenerator {
         double absorb = sin(subT * pi) * 8;
         pose.hip.y += absorb;
         pose.neck.setValues(0, pose.hip.y - 25 + (absorb*0.5), absorb * 0.5);
-
-        pose.lHand.setValues(-8, pose.neck.y + 20, 0);
-        pose.rHand.setValues(8, pose.neck.y + 20, 0);
-        pose.lElbow = pose.neck + v.Vector3(-6, 7.5, 0);
-        pose.rElbow = pose.neck + v.Vector3(6, 7.5, 0);
-
+        pose.lHand.setValues(-8, pose.neck.y + 20, 0); pose.rHand.setValues(8, pose.neck.y + 20, 0);
+        pose.lElbow = pose.neck + v.Vector3(-6, 7.5, 0); pose.rElbow = pose.neck + v.Vector3(6, 7.5, 0);
         double kneeY = (pose.hip.y + 24) * 0.5;
         pose.lKnee.y = kneeY; pose.rKnee.y = kneeY;
         pose.lFoot.y = 24; pose.rFoot.y = 24;
       }
-
       _updateHead(pose);
       frames.add(StickmanKeyframe(pose: pose, frameIndex: i));
     }
     return StickmanClip(name: "Jump", keyframes: frames, fps: 30, isLooping: false);
   }
 
+  // --- 4. CUSTOM (Accurate Clone) ---
+  static StickmanClip generateEmpty(StickmanSkeleton? style) {
+    List<StickmanKeyframe> frames = [];
+    for(int i=0; i<30; i++) {
+        // CRITICAL: Clone the EXACT pose from the style, not just parameters.
+        // We use style?.clone() to preserve limb positions.
+        StickmanSkeleton p = style != null ? style.clone() : StickmanSkeleton();
+        frames.add(StickmanKeyframe(pose: p, frameIndex: i));
+    }
+    return StickmanClip(name: "Custom", keyframes: frames, fps: 30, isLooping: true);
+  }
+
   // --- HELPERS ---
 
   static v.Vector3 _sphericalToCartesian(double r, double pitch, double yaw) {
-    // Corrected orientation assumption:
-    // Pitch 0 is Down (Y+). -pi/2 is Forward (Z+).
     double y = r * cos(pitch);
     double h = r * sin(pitch);
-
     double z = -h * cos(yaw);
     double x = -h * sin(yaw);
-
     return v.Vector3(x, y, z);
   }
 
@@ -315,9 +282,9 @@ class StickmanGenerator {
     vec.z = -x * sinA + z * cosA;
   }
 
-  static void _setSmoothLeg(StickmanSkeleton pose, {required bool isLeft, required double angle}) {
+  static void _setSmoothLeg(StickmanSkeleton pose, {required bool isLeft, required double angle, required double length, required double strideScale}) {
      double side = isLeft ? -3 : 3;
-     double stride = sin(angle) * 13;
+     double stride = sin(angle) * (13.0 * strideScale);
      double cosVal = cos(angle);
      double footY = 24;
      if (cosVal > 0) {
@@ -329,28 +296,21 @@ class StickmanGenerator {
      v.Vector3 hipPos = pose.hip + v.Vector3(side, 0, 0);
      v.Vector3 footPos = v.Vector3(side, footY, stride);
      v.Vector3 mid = (hipPos + footPos) * 0.5;
-     mid.z += 8;
+     // Adjust knee bend forward based on length
+     mid.z += length * 0.6;
      if(isLeft) { pose.lKnee=mid; pose.lFoot=footPos; }
      else { pose.rKnee=mid; pose.rFoot=footPos; }
   }
 
-  static void _setActiveArm(StickmanSkeleton pose, {required bool isLeft, required double angle}) {
+  static void _setActiveArm(StickmanSkeleton pose, {required bool isLeft, required double angle, required double length}) {
      v.Vector3 neck = pose.neck;
      double side = isLeft ? -6 : 6;
-
-     // ASYMMETRICAL SWING:
-     // Bias the sine wave to swing BACK more (-Z) and FRONT less (+Z).
-     // Shift range: sin goes -1 to 1.
-     // (sin - 0.3) goes -1.3 to 0.7.
      double swing = (sin(angle) - 0.3) * 0.9;
-
      double elbowBendOffset = max(0.0, swing) * 4.0;
 
-     // Elbow Position
-     v.Vector3 elbow = neck + v.Vector3(side, 10 - (elbowBendOffset*0.2), swing * 8);
-
-     // Hand Position
-     v.Vector3 hand = elbow + v.Vector3(0, 10, 5 + swing * 5 + elbowBendOffset);
+     // Dynamic lengths using 'length' param
+     v.Vector3 elbow = neck + v.Vector3(side, length, swing * 8);
+     v.Vector3 hand = elbow + v.Vector3(0, length, 5 + swing * 5 + elbowBendOffset);
 
      if(isLeft) { pose.lElbow=elbow; pose.lHand=hand; }
      else { pose.rElbow=elbow; pose.rHand=hand; }
@@ -358,14 +318,4 @@ class StickmanGenerator {
 
   static double _lerp(double a, double b, double t) => a + (b - a) * t;
   static v.Vector3 _lerpVector(v.Vector3 a, v.Vector3 b, double t) => v.Vector3(_lerp(a.x,b.x,t), _lerp(a.y,b.y,t), _lerp(a.z,b.z,t));
-
-  static StickmanClip generateEmpty(StickmanSkeleton? style) {
-    List<StickmanKeyframe> frames = [];
-    for(int i=0; i<30; i++) {
-        // Clone the style (current pose) if available, else default
-        StickmanSkeleton p = style?.clone() ?? StickmanSkeleton();
-        frames.add(StickmanKeyframe(pose: p, frameIndex: i));
-    }
-    return StickmanClip(name: "Custom", keyframes: frames, fps: 30, isLooping: true);
-  }
 }

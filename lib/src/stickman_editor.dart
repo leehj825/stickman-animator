@@ -53,7 +53,21 @@ class _StickmanPoseEditorState extends State<StickmanPoseEditor> {
     });
   }
 
+  // --- NEW: Sync Logic ---
+  /// Ensures the clip matches the current Pose Editor visual settings (Head Radius, Line Width)
+  /// This fixes the issue where changing style in Pose mode didn't update the animation.
+  void _syncLiveStyleToClip(StickmanClip clip) {
+    final currentStyle = widget.controller.skeleton;
+    for (var frame in clip.keyframes) {
+      frame.pose.headRadius = currentStyle.headRadius;
+      frame.pose.strokeWidth = currentStyle.strokeWidth;
+    }
+  }
+
   void _loadClip(StickmanClip clip) {
+    // CRITICAL: Sync style before loading
+    _syncLiveStyleToClip(clip);
+
     setState(() {
       widget.controller.activeClip = clip;
       widget.controller.currentFrameIndex = 0.0;
