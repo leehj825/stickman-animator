@@ -444,11 +444,11 @@ class _StickmanPoseEditorState extends State<StickmanPoseEditor> {
                                     child: Row(
                                       mainAxisAlignment: MainAxisAlignment.center,
                                       children: [
-                                        _clipButton("Run", () => _loadClip(StickmanGenerator.generateRun())),
-                                        _clipButton("Jump", () => _loadClip(StickmanGenerator.generateJump())),
-                                        _clipButton("Kick", () => _loadClip(StickmanGenerator.generateKick())),
+                                        _clipButton("Run", () => _loadClip(StickmanGenerator.generateRun(widget.controller.skeleton))),
+                                        _clipButton("Jump", () => _loadClip(StickmanGenerator.generateJump(widget.controller.skeleton))),
+                                        _clipButton("Kick", () => _loadClip(StickmanGenerator.generateKick(widget.controller.skeleton))),
                                         _clipButton("+", () {
-                                          _loadClip(StickmanGenerator.generateEmpty());
+                                          _loadClip(StickmanGenerator.generateEmpty(widget.controller.skeleton));
                                           if (mounted) {
                                             ScaffoldMessenger.of(context).showSnackBar(
                                               const SnackBar(content: Text("New Custom Animation Created (30 Frames)")),
