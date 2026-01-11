@@ -568,3 +568,102 @@ class _StickmanPoseEditorState extends State<StickmanPoseEditor> {
       },
     );
   }
+
+  // --- RESTORED HELPER METHODS ---
+
+  Widget _viewButton(String label, CameraView view) {
+    bool selected = _cameraView == view;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 2),
+      child: InkWell(
+        onTap: () => setState(() => _cameraView = view),
+        child: Container(
+          width: 50, padding: const EdgeInsets.symmetric(vertical: 6),
+          alignment: Alignment.center,
+          decoration: BoxDecoration(color: selected ? Colors.blueAccent : Colors.transparent, borderRadius: BorderRadius.circular(4)),
+          child: Text(label, style: const TextStyle(color: Colors.white, fontSize: 10)),
+        ),
+      ),
+    );
+  }
+
+  Widget _axisButton(String label, AxisMode mode, [Color color = Colors.white]) {
+    bool selected = _axisMode == mode;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 2),
+      child: InkWell(
+        onTap: () => setState(() => _axisMode = mode),
+        child: Container(
+          width: 40, padding: const EdgeInsets.symmetric(vertical: 6),
+          alignment: Alignment.center,
+          decoration: BoxDecoration(color: selected ? Colors.amber : Colors.transparent, borderRadius: BorderRadius.circular(4)),
+          child: Text(label, style: TextStyle(color: selected ? Colors.black : color, fontSize: 12, fontWeight: FontWeight.bold)),
+        ),
+      ),
+    );
+  }
+
+  Widget _clipButton(String label, VoidCallback onTap) {
+    bool isActive = widget.controller.activeClip?.name == label;
+    return Padding(
+      padding: EdgeInsets.symmetric(horizontal: 4),
+      child: ElevatedButton(
+        style: ElevatedButton.styleFrom(
+          backgroundColor: isActive ? Colors.blue : Colors.grey[700],
+          foregroundColor: Colors.white,
+          padding: EdgeInsets.symmetric(horizontal: 10, vertical: 0),
+        ),
+        onPressed: onTap,
+        child: Text(label, style: TextStyle(fontSize: 12)),
+      ),
+    );
+  }
+
+  void _copyPoseToClipboard() {
+    final skel = widget.controller.skeleton;
+    final buffer = StringBuffer();
+    String format(v.Vector3 v) => "${v.x.toStringAsFixed(1)}, ${v.y.toStringAsFixed(1)}, ${v.z.toStringAsFixed(1)}";
+    buffer.writeln("// Pose Data...");
+    buffer.writeln(skel.toJson().toString());
+    Clipboard.setData(ClipboardData(text: buffer.toString()));
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Dart Code copied!")));
+  }
+
+  Future<void> _saveObjToFile() async {
+    final obj = StickmanExporter.generateObjString(widget.controller.skeleton);
+    if (Platform.isAndroid || Platform.isIOS) {
+      final directory = await getTemporaryDirectory();
+      final file = File('${directory.path}/stickman.obj');
+      await file.writeAsString(obj);
+      await Share.shareXFiles([XFile(file.path)], text: 'Stickman 3D Model');
+    } else {
+      String? outputFile = await FilePicker.platform.saveFile(dialogTitle: 'Save OBJ', fileName: 'stickman.obj', type: FileType.any);
+      if (outputFile != null) {
+        await File(outputFile).writeAsString(obj);
+        if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("OBJ Saved!")));
+      }
+    }
+  }
+
+  void _applyBoneToAll() {
+    widget.controller.propagatePoseToAllFrames();
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Applied ${widget.controller.lastModifiedBone} to all frames")));
+  }
+
+  Future<void> _exportZip() async {
+    if (widget.controller.activeClip == null) return;
+    final bytes = await StickmanExporter.exportClipToZip(widget.controller.activeClip!);
+    if (Platform.isAndroid || Platform.isIOS) {
+      final directory = await getTemporaryDirectory();
+      final file = File('${directory.path}/animation.zip');
+      await file.writeAsBytes(bytes);
+      await Share.shareXFiles([XFile(file.path)], text: 'Stickman Animation ZIP');
+    } else {
+      String? outputFile = await FilePicker.platform.saveFile(dialogTitle: 'Save ZIP', fileName: 'animation.zip', type: FileType.any);
+      if (outputFile != null) {
+        await File(outputFile).writeAsBytes(bytes);
+        if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("ZIP Saved!")));
+      }
+    }
+  }
+}
