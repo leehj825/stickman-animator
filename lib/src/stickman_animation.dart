@@ -6,6 +6,20 @@ class StickmanKeyframe {
   final int frameIndex;
 
   StickmanKeyframe({required this.pose, required this.frameIndex});
+
+  Map<String, dynamic> toJson() {
+    return {
+      'pose': pose.toJson(),
+      'frameIndex': frameIndex,
+    };
+  }
+
+  factory StickmanKeyframe.fromJson(Map<String, dynamic> json) {
+    return StickmanKeyframe(
+      pose: StickmanSkeleton.fromJson(json['pose']),
+      frameIndex: json['frameIndex'] as int,
+    );
+  }
 }
 
 /// Represents a sequence of keyframes.
@@ -13,11 +27,13 @@ class StickmanClip {
   final String name;
   final List<StickmanKeyframe> keyframes;
   final double fps;
+  final bool isLooping;
 
   StickmanClip({
     required this.name,
     required this.keyframes,
     this.fps = 30.0,
+    this.isLooping = true,
   });
 
   /// Creates a clip with [length] frames, all initialized to the default pose.
@@ -53,4 +69,26 @@ class StickmanClip {
 
   /// Total number of frames in the clip
   int get frameCount => keyframes.length;
+
+  Map<String, dynamic> toJson() {
+    return {
+      'name': name,
+      'keyframes': keyframes.map((k) => k.toJson()).toList(),
+      'fps': fps,
+      'isLooping': isLooping,
+    };
+  }
+
+  factory StickmanClip.fromJson(Map<String, dynamic> json) {
+    var keyframesList = (json['keyframes'] as List)
+        .map((k) => StickmanKeyframe.fromJson(k))
+        .toList();
+
+    return StickmanClip(
+      name: json['name'] as String,
+      keyframes: keyframesList,
+      fps: (json['fps'] as num).toDouble(),
+      isLooping: json['isLooping'] as bool? ?? true,
+    );
+  }
 }

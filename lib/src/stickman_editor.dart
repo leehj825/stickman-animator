@@ -11,6 +11,7 @@ import 'stickman_painter.dart';
 import 'stickman_exporter.dart';
 import 'stickman_animation.dart';
 import 'stickman_generator.dart';
+import 'stickman_persistence.dart';
 
 class StickmanPoseEditor extends StatefulWidget {
   final StickmanController controller;
@@ -438,17 +439,56 @@ class _StickmanPoseEditorState extends State<StickmanPoseEditor> {
                               color: Colors.black54,
                               child: Column(
                                 children: [
+                                  // Project Management Row
+                                  Row(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    children: [
+                                      ElevatedButton.icon(
+                                        icon: Icon(Icons.save, size: 16),
+                                        label: Text("Save Project"),
+                                        style: ElevatedButton.styleFrom(backgroundColor: Colors.teal),
+                                        onPressed: () async {
+                                          if (widget.controller.activeClip != null) {
+                                            await StickmanPersistence.saveClip(widget.controller.activeClip!);
+                                            if (mounted) {
+                                              ScaffoldMessenger.of(context).showSnackBar(
+                                                  const SnackBar(content: Text("Project saved! You can reload this file to edit later."))
+                                              );
+                                            }
+                                          }
+                                        },
+                                      ),
+                                      const SizedBox(width: 10),
+                                      ElevatedButton.icon(
+                                        icon: Icon(Icons.folder_open, size: 16),
+                                        label: Text("Load Project"),
+                                        style: ElevatedButton.styleFrom(backgroundColor: Colors.orange),
+                                        onPressed: () async {
+                                          final clip = await StickmanPersistence.loadClip();
+                                          if (clip != null) {
+                                            _loadClip(clip);
+                                            if (mounted) {
+                                              ScaffoldMessenger.of(context).showSnackBar(
+                                                  const SnackBar(content: Text("Project loaded!"))
+                                              );
+                                            }
+                                          }
+                                        },
+                                      ),
+                                    ],
+                                  ),
+                                  SizedBox(height: 5),
                                   // Clip Selector
                                   SingleChildScrollView(
                                     scrollDirection: Axis.horizontal,
                                     child: Row(
                                       mainAxisAlignment: MainAxisAlignment.center,
                                       children: [
-                                        _clipButton("Run", () => _loadClip(AnimationFactory.generateRun())),
-                                        _clipButton("Jump", () => _loadClip(AnimationFactory.generateJump())),
-                                        _clipButton("Kick", () => _loadClip(AnimationFactory.generateKick())),
+                                        _clipButton("Run", () => _loadClip(StickmanGenerator.generateRun(widget.controller.skeleton))),
+                                        _clipButton("Jump", () => _loadClip(StickmanGenerator.generateJump(widget.controller.skeleton))),
+                                        _clipButton("Kick", () => _loadClip(StickmanGenerator.generateKick(widget.controller.skeleton))),
                                         _clipButton("+", () {
-                                          _loadClip(AnimationFactory.generateEmpty());
+                                          _loadClip(StickmanGenerator.generateEmpty(widget.controller.skeleton));
                                           if (mounted) {
                                             ScaffoldMessenger.of(context).showSnackBar(
                                               const SnackBar(content: Text("New Custom Animation Created (30 Frames)")),
