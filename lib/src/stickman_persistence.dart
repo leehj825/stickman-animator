@@ -7,7 +7,7 @@ import 'stickman_animation.dart';
 
 class StickmanPersistence {
 
-  /// Saves the ENTIRE PROJECT (List of clips) to a single JSON file.
+  /// Saves the ENTIRE PROJECT (List of clips) to a single JSON file (extension: .sap).
   static Future<void> saveProject(List<StickmanClip> clips) async {
     try {
       final projectMap = {
@@ -16,13 +16,13 @@ class StickmanPersistence {
       };
 
       final jsonString = jsonEncode(projectMap);
-      final fileName = 'stickman_project_${DateTime.now().millisecondsSinceEpoch}.stickman_proj';
+      final fileName = 'stickman_project_${DateTime.now().millisecondsSinceEpoch}.sap';
 
       if (Platform.isAndroid || Platform.isIOS) {
         final directory = await getTemporaryDirectory();
         final file = File('${directory.path}/$fileName');
         await file.writeAsString(jsonString);
-        await Share.shareXFiles([XFile(file.path)], text: 'Stickman Project (All Animations)');
+        await Share.shareXFiles([XFile(file.path)], text: 'Stickman Project (.sap) (All Animations)');
       } else {
         String? outputFile = await FilePicker.platform.saveFile(
           dialogTitle: 'Save Project',

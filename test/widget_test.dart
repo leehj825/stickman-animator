@@ -1,3 +1,4 @@
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:stickman_3d/stickman_3d.dart';
 import '../lib/main.dart'; // Import relative to test folder, assuming main.dart is in lib
