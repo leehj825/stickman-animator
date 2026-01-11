@@ -295,133 +295,119 @@ class _StickmanPoseEditorState extends State<StickmanPoseEditor> {
 
                     // Left Column (Top Left)
                     Positioned(
-                      top: 50, // Moved down for Top Bar
+                      top: 60, // Moved down slightly
                       left: 10,
-                      bottom: 150, // Leave space for bottom bar
+                      bottom: 120, // Give space
                       width: 80,
-                      child: Column(
-                         crossAxisAlignment: CrossAxisAlignment.start,
-                         children: [
-                           // Camera View Buttons
-                           Container(
-                             padding: const EdgeInsets.all(4),
-                             decoration: BoxDecoration(
-                                color: Colors.black54,
-                                borderRadius: BorderRadius.circular(8),
+                      child: SingleChildScrollView(
+                        child: Column(
+                           crossAxisAlignment: CrossAxisAlignment.start,
+                           children: [
+                             // Camera View Buttons
+                             Container(
+                               padding: const EdgeInsets.all(4),
+                               decoration: BoxDecoration(
+                                  color: Colors.black54,
+                                  borderRadius: BorderRadius.circular(8),
+                               ),
+                               child: Column(
+                                 children: [
+                                   _viewButton("Free", CameraView.free),
+                                   _viewButton("View X", CameraView.side),
+                                   _viewButton("View Y", CameraView.top),
+                                   _viewButton("View Z", CameraView.front),
+                                 ],
+                               ),
                              ),
-                             child: Column(
-                               children: [
-                                 _viewButton("Free", CameraView.free),
-                                 _viewButton("View X", CameraView.side),
-                                 _viewButton("View Y", CameraView.top),
-                                 _viewButton("View Z", CameraView.front),
-                               ],
-                             ),
-                           ),
-                           const SizedBox(height: 20),
-                           // Camera Height Slider
-                           Expanded(
-                             child: Column(
-                               mainAxisSize: MainAxisSize.min,
-                               children: [
-                                 Text("Height", style: styleLabel),
-                                 SizedBox(
-                                   height: 150,
-                                   child: RotatedBox(
-                                     quarterTurns: 3,
-                                     child: Slider(
-                                       value: _cameraHeight,
-                                       min: -200,
-                                       max: 200,
-                                       onChanged: (v) => setState(() => _cameraHeight = v),
-                                     ),
-                                   ),
+                             const SizedBox(height: 20),
+                             Text("Height", style: TextStyle(color: Colors.white70, fontSize: 10)),
+                             SizedBox(
+                               height: 150,
+                               child: RotatedBox(
+                                 quarterTurns: 3,
+                                 child: Slider(
+                                   value: _cameraHeight,
+                                   min: -200,
+                                   max: 200,
+                                   onChanged: (v) => setState(() => _cameraHeight = v),
                                  ),
-                                 const SizedBox(height: 20),
-                                 Text("Zoom", style: styleLabel),
-                                 SizedBox(
-                                   height: 150,
-                                   child: RotatedBox(
-                                     quarterTurns: 3,
-                                     child: Slider(
-                                       value: _zoom,
-                                       min: 0.5,
-                                       max: 10.0,
-                                       onChanged: (v) => setState(() => _zoom = v),
-                                     ),
-                                   ),
-                                 ),
-                               ],
+                               ),
                              ),
-                           ),
-                         ],
+                             const SizedBox(height: 20),
+                             Text("Zoom", style: TextStyle(color: Colors.white70, fontSize: 10)),
+                             SizedBox(
+                               height: 150,
+                               child: RotatedBox(
+                                 quarterTurns: 3,
+                                 child: Slider(
+                                   value: _zoom,
+                                   min: 0.5,
+                                   max: 10.0,
+                                   onChanged: (v) => setState(() => _zoom = v),
+                                 ),
+                               ),
+                             ),
+                           ],
+                        ),
                       ),
                     ),
 
                     // Right Column (Top Right)
                     Positioned(
-                      top: 50, // Moved down for Top Bar
+                      top: 60,
                       right: 10,
-                      bottom: 150,
+                      bottom: 120,
                       width: 80,
-                      child: Column(
-                         crossAxisAlignment: CrossAxisAlignment.end,
-                         children: [
-                           // Drag Axis Buttons
-                           Container(
-                             padding: const EdgeInsets.all(4),
-                             decoration: BoxDecoration(
-                                color: Colors.black54,
-                                borderRadius: BorderRadius.circular(8),
+                      child: SingleChildScrollView(
+                        child: Column(
+                           crossAxisAlignment: CrossAxisAlignment.end,
+                           children: [
+                             // Drag Axis Buttons
+                             Container(
+                               padding: const EdgeInsets.all(4),
+                               decoration: BoxDecoration(
+                                  color: Colors.black54,
+                                  borderRadius: BorderRadius.circular(8),
+                               ),
+                               child: Column(
+                                 children: [
+                                   _axisButton("Free", AxisMode.none),
+                                   _axisButton("X", AxisMode.x, Colors.red),
+                                   _axisButton("Y", AxisMode.y, Colors.green),
+                                   _axisButton("Z", AxisMode.z, Colors.blue),
+                                 ],
+                               ),
                              ),
-                             child: Column(
-                               children: [
-                                 _axisButton("Free", AxisMode.none),
-                                 _axisButton("X", AxisMode.x, Colors.red),
-                                 _axisButton("Y", AxisMode.y, Colors.green),
-                                 _axisButton("Z", AxisMode.z, Colors.blue),
-                               ],
-                             ),
-                           ),
-                           const SizedBox(height: 20),
-                           // Head Slider
-                           Column(
-                             children: [
-                               Text("Head", style: styleLabel),
-                               SizedBox(
-                                 height: 150,
-                                 child: RotatedBox(
-                                   quarterTurns: 3,
-                                   child: Slider(
-                                     value: widget.controller.skeleton.headRadius,
-                                     min: 2.0,
-                                     max: 15.0,
-                                     onChanged: (v) => setState(() => widget.controller.skeleton.headRadius = v),
-                                   ),
+                             const SizedBox(height: 20),
+                             Text("Head", style: TextStyle(color: Colors.white70, fontSize: 10)),
+                             SizedBox(
+                               height: 150,
+                               child: RotatedBox(
+                                 quarterTurns: 3,
+                                 child: Slider(
+                                   value: widget.controller.skeleton.headRadius,
+                                   min: 2.0,
+                                   max: 15.0,
+                                   onChanged: (v) => setState(() => widget.controller.skeleton.headRadius = v),
                                  ),
                                ),
-                             ],
-                           ),
-                           const SizedBox(height: 20),
-                           // Line Slider
-                           Column(
-                             children: [
-                               Text("Line", style: styleLabel),
-                               SizedBox(
-                                 height: 150,
-                                 child: RotatedBox(
-                                   quarterTurns: 3,
-                                   child: Slider(
-                                     value: widget.controller.skeleton.strokeWidth,
-                                     min: 1.0,
-                                     max: 10.0,
-                                     onChanged: (v) => setState(() => widget.controller.skeleton.strokeWidth = v),
-                                   ),
+                             ),
+                             const SizedBox(height: 20),
+                             Text("Line", style: TextStyle(color: Colors.white70, fontSize: 10)),
+                             SizedBox(
+                               height: 150,
+                               child: RotatedBox(
+                                 quarterTurns: 3,
+                                 child: Slider(
+                                   value: widget.controller.skeleton.strokeWidth,
+                                   min: 1.0,
+                                   max: 10.0,
+                                   onChanged: (v) => setState(() => widget.controller.skeleton.strokeWidth = v),
                                  ),
                                ),
-                             ],
-                           ),
-                         ],
+                             ),
+                           ],
+                        ),
                       ),
                     ),
 
@@ -513,8 +499,10 @@ class _StickmanPoseEditorState extends State<StickmanPoseEditor> {
                                         ),
                                       Expanded(
                                         child: Slider(
-                                          value: widget.controller.currentFrameIndex,
+                                          // SAFETY FIX: Clamp value to ensure it never exceeds max due to floating point drift
+                                          value: widget.controller.currentFrameIndex.clamp(0.0, (widget.controller.activeClip?.frameCount.toDouble() ?? 1) - 0.01),
                                           min: 0,
+                                          // Define max explicitly
                                           max: (widget.controller.activeClip?.frameCount.toDouble() ?? 1) - 0.01,
                                           onChanged: (v) {
                                             setState(() {

@@ -337,8 +337,9 @@ class StickmanGenerator {
      v.Vector3 neck = pose.neck;
      double side = isLeft ? -6 : 6;
 
-     // Increased Swing Amplitude (1.2 instead of 0.7)
-     double swing = sin(angle) * 1.2;
+     // FIX 3: Reduced Swing Amplitude (1.2 -> 0.8) for better balance
+     // This makes the front swing less aggressive.
+     double swing = sin(angle) * 0.8;
 
      // DYNAMIC ELBOW:
      double elbowBendOffset = max(0.0, swing) * 4.0;
