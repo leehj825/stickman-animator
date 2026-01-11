@@ -9,6 +9,8 @@ import 'stickman_skeleton.dart';
 import 'stickman_animator.dart';
 import 'stickman_painter.dart';
 import 'stickman_exporter.dart';
+import 'stickman_animation.dart';
+import 'stickman_generator.dart';
 
 class StickmanPoseEditor extends StatefulWidget {
   final StickmanController controller;
@@ -44,6 +46,29 @@ class _StickmanPoseEditorState extends State<StickmanPoseEditor> {
     widget.controller.setStrategy(ManualMotionStrategy());
   }
 
+  void _switchMode(EditorMode mode) {
+    setState(() {
+      widget.controller.mode = mode;
+      widget.controller.isPlaying = false;
+      // When switching to pose mode, we stop animation logic
+      // But controller.update already handles mode logic.
+    });
+  }
+
+  void _loadClip(StickmanClip clip) {
+    setState(() {
+      widget.controller.activeClip = clip;
+      widget.controller.currentFrameIndex = 0.0;
+      widget.controller.isPlaying = true;
+    });
+  }
+
+  void _togglePlayback() {
+    setState(() {
+      widget.controller.isPlaying = !widget.controller.isPlaying;
+    });
+  }
+
   void _refreshNodeCache() {
     final allNodes = <StickmanNode>[];
     void traverse(StickmanNode n) {
@@ -77,6 +102,15 @@ class _StickmanPoseEditorState extends State<StickmanPoseEditor> {
 
     final scaleFactor = modelScale * _zoom;
 
+    // Helper to apply changes
+    void applyMove(v.Vector3 delta) {
+      node.position.add(delta);
+      // If in Animation Mode, save changes to the current frame
+      if (widget.controller.mode == EditorMode.animate) {
+        widget.controller.saveCurrentPoseToFrame();
+      }
+    }
+
     // Inverse Logic depends on CameraView
     if (_cameraView == CameraView.free) {
       // 3D Inverse with Camera-Relative Dragging
@@ -85,67 +119,45 @@ class _StickmanPoseEditorState extends State<StickmanPoseEditor> {
         ..rotateY(_rotationY);
 
       if (_axisMode == AxisMode.none) {
-        // Camera-Relative Dragging logic
-        // We want dragging Right on screen (delta.dx > 0) to move the object to the Camera's Right.
-        // We want dragging Up on screen (delta.dy < 0) to move the object to the Camera's Up.
-
-        // Since we are rotating the world (or model) by `rotMatrix`, the Camera is effectively fixed.
-        // The inverse of `rotMatrix` transforms from Camera/Screen space back to World space.
-        // This allows us to map screen deltas directly to world movement aligned with the current view.
-
         final invMatrix = v.Matrix4.inverted(rotMatrix);
-
-        // Map screen delta (X, Y) to a 3D vector in View Space (Z=0 plane)
-        // Screen Y is Down, so typically corresponds to Camera -Up (or World -Y in front view).
-        // Let's assume standard mapping: dx -> Right, dy -> Down.
-
         final deltaView = v.Vector3(screenDelta.dx, screenDelta.dy, 0);
-
-        // Transform this delta back to World Space
         final worldMove = invMatrix.transform3(deltaView);
-
-        // Scale appropriately
         worldMove.scale(1.0 / scaleFactor);
-
-        node.position.add(worldMove);
+        applyMove(worldMove);
       } else {
         _applyAxisConstrainedMove(node, screenDelta, scaleFactor, rotMatrix);
+        if (widget.controller.mode == EditorMode.animate) {
+          widget.controller.saveCurrentPoseToFrame();
+        }
       }
     } else {
       // Orthographic Inverse
-      // Map screen delta (dx, dy) to world axes directly
       double dx = screenDelta.dx / scaleFactor;
       double dy = screenDelta.dy / scaleFactor;
+      v.Vector3 delta = v.Vector3.zero();
 
       if (_axisMode == AxisMode.none) {
         if (_cameraView == CameraView.front) {
-          // Front: Screen X=World X, Screen Y=World Y. Z unchanged.
-          node.position.x += dx;
-          node.position.y += dy;
+          delta.setValues(dx, dy, 0);
         } else if (_cameraView == CameraView.side) {
-          // Side: Screen X=World Z, Screen Y=World Y. X unchanged.
-          node.position.z += dx;
-          node.position.y += dy;
+          delta.setValues(0, dy, dx);
         } else if (_cameraView == CameraView.top) {
-          // Top: Screen X=World X, Screen Y=World Z. Y unchanged.
-          node.position.x += dx;
-          node.position.z += dy;
+          delta.setValues(dx, 0, dy);
         }
       } else {
-        // Axis Constrained in Ortho view
-        // Just mask the deltas
+        // Axis Constrained
         if (_cameraView == CameraView.front) {
-           if (_axisMode == AxisMode.x) node.position.x += dx;
-           if (_axisMode == AxisMode.y) node.position.y += dy;
-           // Z cannot be moved in Front view (perpendicular)
+           if (_axisMode == AxisMode.x) delta.x = dx;
+           if (_axisMode == AxisMode.y) delta.y = dy;
         } else if (_cameraView == CameraView.side) {
-           if (_axisMode == AxisMode.z) node.position.z += dx;
-           if (_axisMode == AxisMode.y) node.position.y += dy;
+           if (_axisMode == AxisMode.z) delta.z = dx;
+           if (_axisMode == AxisMode.y) delta.y = dy;
         } else if (_cameraView == CameraView.top) {
-           if (_axisMode == AxisMode.x) node.position.x += dx;
-           if (_axisMode == AxisMode.z) node.position.z += dy;
+           if (_axisMode == AxisMode.x) delta.x = dx;
+           if (_axisMode == AxisMode.z) delta.z = dy;
         }
       }
+      applyMove(delta);
     }
   }
 
@@ -253,11 +265,38 @@ class _StickmanPoseEditorState extends State<StickmanPoseEditor> {
               SafeArea(
                 child: Stack(
                   children: [
-                    // Left Column (Top Left)
+                    // Top Bar: Mode Switcher
                     Positioned(
                       top: 10,
+                      left: 0,
+                      right: 0,
+                      child: Center(
+                        child: Container(
+                          padding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                          decoration: BoxDecoration(color: Colors.black54, borderRadius: BorderRadius.circular(20)),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              InkWell(
+                                onTap: () => _switchMode(EditorMode.pose),
+                                child: Text("Pose", style: TextStyle(color: widget.controller.mode == EditorMode.pose ? Colors.blue : Colors.white, fontWeight: FontWeight.bold)),
+                              ),
+                              Container(margin: EdgeInsets.symmetric(horizontal: 8), width: 1, height: 20, color: Colors.white),
+                              InkWell(
+                                onTap: () => _switchMode(EditorMode.animate),
+                                child: Text("Animate", style: TextStyle(color: widget.controller.mode == EditorMode.animate ? Colors.blue : Colors.white, fontWeight: FontWeight.bold)),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+
+                    // Left Column (Top Left)
+                    Positioned(
+                      top: 50, // Moved down for Top Bar
                       left: 10,
-                      bottom: 100, // Leave space for bottom bar
+                      bottom: 150, // Leave space for bottom bar
                       width: 80,
                       child: Column(
                          crossAxisAlignment: CrossAxisAlignment.start,
@@ -320,9 +359,9 @@ class _StickmanPoseEditorState extends State<StickmanPoseEditor> {
 
                     // Right Column (Top Right)
                     Positioned(
-                      top: 10,
+                      top: 50, // Moved down for Top Bar
                       right: 10,
-                      bottom: 100,
+                      bottom: 150,
                       width: 80,
                       child: Column(
                          crossAxisAlignment: CrossAxisAlignment.end,
@@ -385,26 +424,77 @@ class _StickmanPoseEditorState extends State<StickmanPoseEditor> {
                       ),
                     ),
 
-                    // Bottom Center Toolbar
+                    // Bottom: Animation Controls (Animate Mode) or Pose Tools
                     Positioned(
-                      bottom: 20,
+                      bottom: 10,
                       left: 0,
                       right: 0,
-                      child: Center(
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            ElevatedButton(
-                              onPressed: _copyPoseToClipboard,
-                              child: const Text("Copy"),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          if (widget.controller.mode == EditorMode.animate)
+                            Container(
+                              padding: EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                              color: Colors.black54,
+                              child: Column(
+                                children: [
+                                  // Clip Selector
+                                  Row(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    children: [
+                                      _clipButton("Run", () => _loadClip(AnimationFactory.generateRun())),
+                                      _clipButton("Jump", () => _loadClip(AnimationFactory.generateJump())),
+                                      _clipButton("Kick", () => _loadClip(AnimationFactory.generateKick())),
+                                    ],
+                                  ),
+                                  // Playback Controls
+                                  Row(
+                                    children: [
+                                      IconButton(
+                                        icon: Icon(widget.controller.isPlaying ? Icons.pause : Icons.play_arrow, color: Colors.white),
+                                        onPressed: _togglePlayback,
+                                      ),
+                                      Expanded(
+                                        child: Slider(
+                                          value: widget.controller.currentFrameIndex,
+                                          min: 0,
+                                          max: (widget.controller.activeClip?.frameCount.toDouble() ?? 1) - 0.01,
+                                          onChanged: (v) {
+                                            setState(() {
+                                              widget.controller.isPlaying = false;
+                                              widget.controller.currentFrameIndex = v;
+                                            });
+                                          },
+                                        ),
+                                      ),
+                                      Text(
+                                        "${widget.controller.currentFrameIndex.floor()}",
+                                        style: TextStyle(color: Colors.white),
+                                      ),
+                                    ],
+                                  ),
+                                ],
+                              ),
                             ),
-                            const SizedBox(width: 16),
-                            ElevatedButton(
-                              onPressed: _saveObjToFile,
-                              child: const Text("OBJ"),
-                            ),
-                          ],
-                        ),
+
+                          SizedBox(height: 10),
+
+                          // Common Export Row
+                          Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              ElevatedButton(
+                                onPressed: _copyPoseToClipboard,
+                                child: const Text("Copy"),
+                              ),
+                              const SizedBox(width: 16),
+                              ElevatedButton(
+                                onPressed: _saveObjToFile,
+                                child: const Text("OBJ"),
+                              ),
+                            ],
+                          ),
+                        ],
                       ),
                     ),
                   ],
@@ -453,6 +543,22 @@ class _StickmanPoseEditorState extends State<StickmanPoseEditor> {
           ),
           child: Text(label, style: TextStyle(color: selected ? Colors.black : color, fontSize: 12, fontWeight: FontWeight.bold)),
         ),
+      ),
+    );
+  }
+
+  Widget _clipButton(String label, VoidCallback onTap) {
+    bool isActive = widget.controller.activeClip?.name == label;
+    return Padding(
+      padding: EdgeInsets.symmetric(horizontal: 4),
+      child: ElevatedButton(
+        style: ElevatedButton.styleFrom(
+          backgroundColor: isActive ? Colors.blue : Colors.grey[700],
+          foregroundColor: Colors.white,
+          padding: EdgeInsets.symmetric(horizontal: 10, vertical: 0),
+        ),
+        onPressed: onTap,
+        child: Text(label, style: TextStyle(fontSize: 12)),
       ),
     );
   }

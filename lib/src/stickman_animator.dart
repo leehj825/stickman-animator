@@ -1,9 +1,11 @@
 import 'dart:math';
 import 'package:vector_math/vector_math_64.dart' as v;
 import 'stickman_skeleton.dart';
+import 'stickman_animation.dart';
 
 enum WeaponType { none, sword, axe, bow }
 enum StickmanState { animating, ragdoll }
+enum EditorMode { pose, animate }
 
 /// Interface for movement strategies
 abstract class MotionStrategy {
@@ -130,6 +132,7 @@ class PoseMotionStrategy implements MotionStrategy {
 class StickmanController {
   final StickmanSkeleton skeleton = StickmanSkeleton();
   StickmanState state = StickmanState.animating;
+  EditorMode mode = EditorMode.pose;
 
   late MotionStrategy _activeStrategy;
 
@@ -141,6 +144,11 @@ class StickmanController {
   double _time = 0.0;
   double _runWeight = 0.0;
   double _facingAngle = 0.0;
+
+  // Animation Mode State
+  StickmanClip? activeClip;
+  double currentFrameIndex = 0.0; // Double for smooth playback interpolation if needed
+  bool isPlaying = false;
 
   // Action State
   bool isAttacking = false;
@@ -190,7 +198,12 @@ class StickmanController {
       return;
     }
 
-    // --- STANDARD ANIMATION LOGIC ---
+    if (mode == EditorMode.animate && activeClip != null) {
+      _updateAnimationMode(dt);
+      return;
+    }
+
+    // --- STANDARD ANIMATION LOGIC (Pose Mode) ---
     _time += dt * 10;
 
     // Speed & Direction Logic
@@ -217,6 +230,35 @@ class StickmanController {
     }
 
     _activeStrategy.update(dt, this);
+  }
+
+  void _updateAnimationMode(double dt) {
+    if (activeClip == null) return;
+
+    if (isPlaying) {
+      currentFrameIndex += dt * activeClip!.fps;
+      if (currentFrameIndex >= activeClip!.frameCount) {
+        currentFrameIndex = 0; // Loop
+      }
+    }
+
+    // Update skeleton from keyframe
+    // If not playing (paused), we rely on currentFrameIndex set by UI slider
+    int frameIdx = currentFrameIndex.floor();
+    final keyframe = activeClip!.getFrame(frameIdx);
+
+    // Copy pose from keyframe to active skeleton so we can see/edit it
+    // We use lerp with t=1.0 to fully copy positions (and properties)
+    skeleton.lerp(keyframe.pose, 1.0);
+  }
+
+  /// Updates the current keyframe with the current skeleton pose.
+  /// Call this when the user edits the pose while in Animate mode.
+  void saveCurrentPoseToFrame() {
+    if (mode == EditorMode.animate && activeClip != null) {
+       int frameIdx = currentFrameIndex.floor();
+       activeClip!.updateFrame(frameIdx, skeleton);
+    }
   }
 }
 
