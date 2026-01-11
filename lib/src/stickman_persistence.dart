@@ -33,9 +33,10 @@ class StickmanPersistence {
   /// Opens a file picker to load a .stickman or .json file.
   static Future<StickmanClip?> loadClip() async {
     try {
+      // Use FileType.any to avoid grayed out files on Google Drive/Android
+      // due to unrecognized custom extensions/MIME types.
       FilePickerResult? result = await FilePicker.platform.pickFiles(
-        type: FileType.custom,
-        allowedExtensions: ['stickman', 'json'],
+        type: FileType.any,
         withData: true, // Ensure bytes are loaded if path is not available
       );
 
