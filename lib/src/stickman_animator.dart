@@ -36,13 +36,7 @@ class ProceduralMotionStrategy implements MotionStrategy {
       controller.skeleton.setHead(controller.skeleton.neck + v.Vector3(0, -8, 0));
     }
 
-    // 2. Shoulders & Hips (Relative to body)
-    controller.skeleton.lShoulder = controller.skeleton.neck.clone();
-    controller.skeleton.rShoulder = controller.skeleton.neck.clone();
-    controller.skeleton.lHip = controller.skeleton.hip.clone();
-    controller.skeleton.rHip = controller.skeleton.hip.clone();
-
-    // 3. Limbs (Run Cycle)
+    // 2. Limbs (Run Cycle)
     double legSwing = sin(controller.time) * 0.8 * controller.runWeight;
     double armSwing = cos(controller.time) * 0.8 * controller.runWeight;
 
@@ -52,9 +46,13 @@ class ProceduralMotionStrategy implements MotionStrategy {
       return rot.transform(point);
     }
 
-    // Legs
-    controller.skeleton.lKnee = rotateX(v.Vector3(-3, 12, 0), legSwing) + controller.skeleton.lHip;
-    controller.skeleton.rKnee = rotateX(v.Vector3(3, 12, 0), -legSwing) + controller.skeleton.rHip;
+    // Legs - Connect to Hip (Root)
+    // Adjust local offsets since we don't have side-hips anymore.
+    // Offsetting knees slightly to sides to avoid overlap? Or strict stick figure?
+    // Request says "Classic Stick Figure". Usually limbs come from same point or very close.
+    // Let's use slight X offset for visual separation, but relative to Hip directly.
+    controller.skeleton.lKnee = rotateX(v.Vector3(-3, 12, 0), legSwing) + controller.skeleton.hip;
+    controller.skeleton.rKnee = rotateX(v.Vector3(3, 12, 0), -legSwing) + controller.skeleton.hip;
     controller.skeleton.lFoot = rotateX(v.Vector3(-3, 12, 0), legSwing + 0.2) + controller.skeleton.lKnee;
     controller.skeleton.rFoot = rotateX(v.Vector3(3, 12, 0), -legSwing + 0.2) + controller.skeleton.rKnee;
 
@@ -72,8 +70,9 @@ class ProceduralMotionStrategy implements MotionStrategy {
       rArmAngle = -0.5;
     }
 
-    controller.skeleton.lElbow = rotateX(v.Vector3(-6, 10, 0), lArmAngle) + controller.skeleton.lShoulder;
-    controller.skeleton.rElbow = rotateX(v.Vector3(6, 10, 0), rArmAngle) + controller.skeleton.rShoulder;
+    // Arms - Connect to Neck
+    controller.skeleton.lElbow = rotateX(v.Vector3(-6, 10, 0), lArmAngle) + controller.skeleton.neck;
+    controller.skeleton.rElbow = rotateX(v.Vector3(6, 10, 0), rArmAngle) + controller.skeleton.neck;
 
     controller.skeleton.lHand = rotateX(v.Vector3(0, 10, 0), lArmAngle - 0.3) + controller.skeleton.lElbow;
     controller.skeleton.rHand = rotateX(v.Vector3(0, 10, 0), rArmAngle - 0.3) + controller.skeleton.rElbow;
@@ -245,24 +244,24 @@ class _RagdollPhysics {
   List<_StickConstraint> sticks = [];
 
   // Used for cross-linking specific parts if they exist
-  _RagdollPoint? hip, lS, rS, lH, rH;
+  _RagdollPoint? hip, neck, lE, rE, lK, rK;
 
   _RagdollPhysics(StickmanSkeleton skel) {
     final pointMap = <String, _RagdollPoint>{};
 
     // 1. Create Points recursively
     void buildPoints(StickmanNode node) {
-      var p = _RagdollPoint(node.position, node: node); // Use reference to position? No, separate physics state.
-      // Actually RagdollPoint copies the vector.
+      var p = _RagdollPoint(node.position, node: node);
       points.add(p);
       pointMap[node.id] = p;
 
-      // Assign special points for cross-linking
+      // Assign special points for constraints
       if (node.id == 'hip') hip = p;
-      if (node.id == 'lShoulder') lS = p;
-      if (node.id == 'rShoulder') rS = p;
-      if (node.id == 'lHip') lH = p;
-      if (node.id == 'rHip') rH = p;
+      if (node.id == 'neck') neck = p;
+      if (node.id == 'lElbow') lE = p;
+      if (node.id == 'rElbow') rE = p;
+      if (node.id == 'lKnee') lK = p;
+      if (node.id == 'rKnee') rK = p;
 
       for (var c in node.children) {
         buildPoints(c);
@@ -270,10 +269,14 @@ class _RagdollPhysics {
     }
     buildPoints(skel.root);
 
-    // 2. Create Sticks (Constraints) - Defines the "Body Shape"
+    // 2. Create Sticks (Constraints)
     void link(_RagdollPoint a, _RagdollPoint b) => sticks.add(_StickConstraint(a, b));
 
     // Automatically link parents to children
+    // With new topology:
+    // Hip -> Neck, Hip -> Knee
+    // Neck -> Elbow
+    // This happens automatically via tree traversal
     void buildConstraints(StickmanNode node) {
       if (!pointMap.containsKey(node.id)) return;
       var p1 = pointMap[node.id]!;
@@ -287,13 +290,7 @@ class _RagdollPhysics {
     }
     buildConstraints(skel.root);
 
-    // Optional: Cross-links for stability (prevents collapsing too easily)
-    // Only if the specific nodes exist
-    if (lS != null && rS != null) link(lS!, rS!); // Shoulder width
-    if (lH != null && rH != null) link(lH!, rH!); // Hip width
-    if (lS != null && lH != null) link(lS!, lH!); // Left Torso side
-    if (rS != null && rH != null) link(rS!, rH!); // Right Torso side
-    // Hip to neck is handled by tree traversal (hip -> neck)
+    // No cross-links needed for classic stickman as limbs connect directly to spine.
   }
 
   void update(double dt) {

@@ -10,14 +10,13 @@ void main() {
     expect(skeleton.hip.x, closeTo(1.0, 0.001));
     expect(skeleton.neck.y, closeTo(-14.7, 0.001));
 
-    // Check narrow shoulders (user requested "remove hip and shoulder points" effect)
-    // lShoulder (-0.6) is very close to neck (0.0)
-    expect(skeleton.lShoulder.x, closeTo(-0.6, 0.001));
-    expect(skeleton.rShoulder.x, closeTo(-0.2, 0.001));
+    // Check hierarchy: Arms connected to neck
+    expect(skeleton.nodes['neck']!.children.any((c) => c.id == 'lElbow'), isTrue);
+    expect(skeleton.nodes['neck']!.children.any((c) => c.id == 'rElbow'), isTrue);
 
-    // Check narrow hips
-    expect(skeleton.lHip.x, closeTo(0.6, 0.001));
-    expect(skeleton.rHip.x, closeTo(0.6, 0.001));
+    // Check hierarchy: Legs connected to hip
+    expect(skeleton.nodes['hip']!.children.any((c) => c.id == 'lKnee'), isTrue);
+    expect(skeleton.nodes['hip']!.children.any((c) => c.id == 'rKnee'), isTrue);
 
     // Check stroke width update
     expect(skeleton.strokeWidth, closeTo(4.6, 0.001));
