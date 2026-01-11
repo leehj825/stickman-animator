@@ -12,17 +12,19 @@ class StickmanPersistence {
     try {
       final jsonString = jsonEncode(clip.toJson());
 
-      // Get temporary directory
-      final directory = await getTemporaryDirectory();
       // Use a sanitized name for the file
       final safeName = clip.name.replaceAll(RegExp(r'[^\w\s]+'), '').trim().replaceAll(' ', '_');
-      final file = File('${directory.path}/$safeName.stickman');
 
-      await file.writeAsString(jsonString);
+      String? outputFile = await FilePicker.platform.saveFile(
+        dialogTitle: 'Save Project',
+        fileName: '$safeName.stickman',
+        type: FileType.any,
+      );
 
-      // Use share_plus to export the file (works on Android/iOS/Desktop)
-      // On desktop this usually opens a save dialog or shares to mail etc.
-      await Share.shareXFiles([XFile(file.path)], text: 'Stickman Animation Project');
+      if (outputFile != null) {
+        final file = File(outputFile);
+        await file.writeAsString(jsonString);
+      }
 
     } catch (e) {
       print('Error saving clip: $e');
