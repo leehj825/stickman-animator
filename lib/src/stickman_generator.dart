@@ -92,8 +92,11 @@ class StickmanGenerator {
         pose.neck.z = _lerp(0, -5, subT);
 
         // Arms Follow Body
-        pose.lHand = pose.neck + v.Vector3(-8, 5, 10); // Guarding face
-        pose.rHand = pose.neck + v.Vector3(8, 5, 2);   // Guarding side
+        pose.lHand = pose.neck + v.Vector3(-8, 5, 10);
+        pose.rHand = pose.neck + v.Vector3(8, 5, 2);
+        // Simple IK for Elbows
+        pose.lElbow = (pose.neck + pose.lHand) * 0.5 + v.Vector3(-5, 0, -5);
+        pose.rElbow = (pose.neck + pose.rHand) * 0.5 + v.Vector3(5, 0, -5);
 
         // Lift Knee (FK)
         double thighPitch = _lerp(0, -pi/2 + 0.2, subT);
@@ -116,7 +119,9 @@ class StickmanGenerator {
 
         // Arms Follow Body
         pose.lHand = pose.neck + v.Vector3(-8, 5, 10);
-        pose.rHand = pose.neck + v.Vector3(8, 0, 5); // Balance arm
+        pose.rHand = pose.neck + v.Vector3(8, 0, 5);
+        pose.lElbow = (pose.neck + pose.lHand) * 0.5 + v.Vector3(-5, 0, -5);
+        pose.rElbow = (pose.neck + pose.rHand) * 0.5 + v.Vector3(5, 0, -5);
 
         // Thigh
         double thighYaw = _lerp(pi/2, pi * 0.7, subT);
@@ -140,6 +145,8 @@ class StickmanGenerator {
 
         pose.lHand = pose.neck + v.Vector3(-8, 5, 10);
         pose.rHand = pose.neck + v.Vector3(8, 2, 5);
+        pose.lElbow = (pose.neck + pose.lHand) * 0.5 + v.Vector3(-5, 0, -5);
+        pose.rElbow = (pose.neck + pose.rHand) * 0.5 + v.Vector3(5, 0, -5);
 
         // Keep knee up
         double thighYaw = pi * 0.7;
@@ -163,6 +170,8 @@ class StickmanGenerator {
         // Arms return to neutral
         pose.lHand = _lerpVector(pose.neck + v.Vector3(-8, 5, 10), pose.neck + v.Vector3(-10, 15, 0), subT);
         pose.rHand = _lerpVector(pose.neck + v.Vector3(8, 2, 5), pose.neck + v.Vector3(10, 15, 0), subT);
+        pose.lElbow = (pose.neck + pose.lHand) * 0.5 + v.Vector3(-5, 0, -5);
+        pose.rElbow = (pose.neck + pose.rHand) * 0.5 + v.Vector3(5, 0, -5);
 
         // Land
         v.Vector3 landingKnee = pose.hip + v.Vector3(3, 12, 0);
@@ -353,8 +362,8 @@ class StickmanGenerator {
   static StickmanClip generateEmpty(StickmanSkeleton? style) {
     List<StickmanKeyframe> frames = [];
     for(int i=0; i<30; i++) {
-        StickmanSkeleton p = StickmanSkeleton();
-        _applyStyle(p, style);
+        // Clone the style (current pose) if available, else default
+        StickmanSkeleton p = style?.clone() ?? StickmanSkeleton();
         frames.add(StickmanKeyframe(pose: p, frameIndex: i));
     }
     return StickmanClip(name: "Custom", keyframes: frames, fps: 30, isLooping: true);
