@@ -48,10 +48,7 @@ class _StickmanPoseEditorState extends State<StickmanPoseEditor> {
 
   void _switchMode(EditorMode mode) {
     setState(() {
-      widget.controller.mode = mode;
-      widget.controller.isPlaying = false;
-      // When switching to pose mode, we stop animation logic
-      // But controller.update already handles mode logic.
+      widget.controller.setMode(mode);
     });
   }
 
@@ -439,13 +436,24 @@ class _StickmanPoseEditorState extends State<StickmanPoseEditor> {
                               child: Column(
                                 children: [
                                   // Clip Selector
-                                  Row(
-                                    mainAxisAlignment: MainAxisAlignment.center,
-                                    children: [
-                                      _clipButton("Run", () => _loadClip(AnimationFactory.generateRun())),
-                                      _clipButton("Jump", () => _loadClip(AnimationFactory.generateJump())),
-                                      _clipButton("Kick", () => _loadClip(AnimationFactory.generateKick())),
-                                    ],
+                                  SingleChildScrollView(
+                                    scrollDirection: Axis.horizontal,
+                                    child: Row(
+                                      mainAxisAlignment: MainAxisAlignment.center,
+                                      children: [
+                                        _clipButton("Run", () => _loadClip(AnimationFactory.generateRun())),
+                                        _clipButton("Jump", () => _loadClip(AnimationFactory.generateJump())),
+                                        _clipButton("Kick", () => _loadClip(AnimationFactory.generateKick())),
+                                        _clipButton("+", () {
+                                          _loadClip(AnimationFactory.generateEmpty());
+                                          if (mounted) {
+                                            ScaffoldMessenger.of(context).showSnackBar(
+                                              const SnackBar(content: Text("New Custom Animation Created (30 Frames)")),
+                                            );
+                                          }
+                                        }),
+                                      ],
+                                    ),
                                   ),
                                   // Playback Controls
                                   Row(

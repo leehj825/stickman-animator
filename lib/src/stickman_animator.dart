@@ -149,6 +149,7 @@ class StickmanController {
   StickmanClip? activeClip;
   double currentFrameIndex = 0.0; // Double for smooth playback interpolation if needed
   bool isPlaying = false;
+  StickmanSkeleton? _backupPose; // Preservation for switching modes
 
   // Action State
   bool isAttacking = false;
@@ -159,6 +160,23 @@ class StickmanController {
 
   StickmanController({this.scale = 1.0, this.weaponType = WeaponType.none}) {
     _activeStrategy = ProceduralMotionStrategy();
+  }
+
+  void setMode(EditorMode newMode) {
+    if (mode == newMode) return;
+
+    if (newMode == EditorMode.animate) {
+      // Entering Animate Mode: Save current pose
+      _backupPose = skeleton.clone();
+    } else {
+      // Entering Pose Mode: Restore pose if exists
+      if (_backupPose != null) {
+        skeleton.lerp(_backupPose!, 1.0); // Full copy
+        _backupPose = null;
+      }
+      isPlaying = false;
+    }
+    mode = newMode;
   }
 
   // Getters for Strategy to access private fields if they were private

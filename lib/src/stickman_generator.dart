@@ -150,4 +150,9 @@ class AnimationFactory {
 
     return StickmanClip(name: "Kick", keyframes: frames);
   }
+
+  /// Generates an empty (default pose) clip for custom animation
+  static StickmanClip generateEmpty() {
+    return StickmanClip.empty(30);
+  }
 }

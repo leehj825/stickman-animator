@@ -20,6 +20,14 @@ class StickmanClip {
     this.fps = 30.0,
   });
 
+  /// Creates a clip with [length] frames, all initialized to the default pose.
+  factory StickmanClip.empty(int length) {
+    final frames = List.generate(length, (index) {
+      return StickmanKeyframe(pose: StickmanSkeleton(), frameIndex: index);
+    });
+    return StickmanClip(name: "New Animation", keyframes: frames);
+  }
+
   /// Returns the keyframe at the specified index.
   /// If index is out of bounds, returns the last or first frame (clamped).
   StickmanKeyframe getFrame(int index) {
