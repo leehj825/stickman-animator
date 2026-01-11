@@ -155,6 +155,9 @@ class StickmanController {
   bool isAttacking = false;
   double _attackTimer = 0.0;
 
+  // Propagation State
+  String? lastModifiedBone;
+
   // Physics State
   _RagdollPhysics? _ragdoll;
 
@@ -277,6 +280,32 @@ class StickmanController {
        int frameIdx = currentFrameIndex.floor();
        activeClip!.updateFrame(frameIdx, skeleton);
     }
+  }
+
+  /// Propagates the pose of the last modified bone to all frames in the active clip.
+  void propagatePoseToAllFrames() {
+    if (activeClip == null || lastModifiedBone == null) return;
+
+    // Get the target position of the last modified bone from the current skeleton
+    final targetPosition = skeleton.getBone(lastModifiedBone!);
+    if (targetPosition == null) return;
+
+    // Iterate through all keyframes and apply the bone position
+    for (int i = 0; i < activeClip!.frameCount; i++) {
+      final keyframe = activeClip!.getFrame(i);
+      // We need to modify the pose in the keyframe.
+      // Since getFrame returns a reference to the keyframe object which holds a skeleton,
+      // we can modify it directly via setBone if we want to mutate.
+      // But typically we should treat keyframes as data.
+      // However, StickmanClip.updateFrame clones.
+      // Here we want batch update.
+
+      // We can access the pose directly
+      keyframe.pose.setBone(lastModifiedBone!, targetPosition);
+    }
+
+    // Force update of current view just in case
+    // (Actually _updateAnimationMode loop handles it next frame)
   }
 }
 

@@ -1,6 +1,9 @@
 import 'dart:math';
+import 'dart:typed_data';
 import 'package:vector_math/vector_math_64.dart' as v;
+import 'package:archive/archive.dart';
 import 'stickman_skeleton.dart';
+import 'stickman_animation.dart';
 
 class StickmanExporter {
   /// Generates a Wavefront OBJ string from the skeleton
@@ -137,5 +140,22 @@ class StickmanExporter {
     traverse(skeleton.root);
 
     return buffer.toString();
+  }
+
+  /// Exports an animation clip as a ZIP file containing a sequence of OBJ files.
+  /// Returns the ZIP file bytes.
+  static Future<List<int>> exportClipToZip(StickmanClip clip) async {
+    final archive = Archive();
+
+    for (int i = 0; i < clip.frameCount; i++) {
+      final keyframe = clip.getFrame(i);
+      final objString = generateObjString(keyframe.pose);
+      final filename = 'frame_${i.toString().padLeft(3, '0')}.obj';
+
+      archive.addFile(ArchiveFile(filename, objString.length, objString.codeUnits));
+    }
+
+    final encoder = ZipEncoder();
+    return encoder.encode(archive) ?? [];
   }
 }

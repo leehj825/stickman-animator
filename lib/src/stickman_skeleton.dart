@@ -150,6 +150,22 @@ class StickmanSkeleton {
   v.Vector3 get rHand => _nodes['rHand']!.position;
   set rHand(v.Vector3 v) => _nodes['rHand']!.position.setFrom(v);
 
+  // Dynamic access
+  v.Vector3? getBone(String name) {
+    if (name == 'head') return head;
+    if (_nodes.containsKey(name)) {
+      return _nodes[name]!.position;
+    }
+    return null;
+  }
+
+  void setBone(String name, v.Vector3 value) {
+    if (name == 'head') {
+      head?.setFrom(value);
+    } else if (_nodes.containsKey(name)) {
+      _nodes[name]!.position.setFrom(value);
+    }
+  }
 
   /// Returns a deep copy of the skeleton
   StickmanSkeleton clone() {

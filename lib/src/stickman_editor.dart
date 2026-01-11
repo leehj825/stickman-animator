@@ -94,6 +94,9 @@ class _StickmanPoseEditorState extends State<StickmanPoseEditor> {
     if (!_nodes.containsKey(nodeId)) return;
 
     final node = _nodes[nodeId]!;
+    // Set the last modified bone for propagation logic
+    widget.controller.lastModifiedBone = node.id;
+
     final modelScale = widget.controller.scale;
     if (modelScale == 0) return;
 
@@ -462,6 +465,12 @@ class _StickmanPoseEditorState extends State<StickmanPoseEditor> {
                                         icon: Icon(widget.controller.isPlaying ? Icons.pause : Icons.play_arrow, color: Colors.white),
                                         onPressed: _togglePlayback,
                                       ),
+                                      if (widget.controller.lastModifiedBone != null)
+                                        IconButton(
+                                          icon: Icon(Icons.copy_all, color: Colors.amber),
+                                          onPressed: _applyBoneToAll,
+                                          tooltip: "Apply ${widget.controller.lastModifiedBone} to All Frames",
+                                        ),
                                       Expanded(
                                         child: Slider(
                                           value: widget.controller.currentFrameIndex,
@@ -500,6 +509,14 @@ class _StickmanPoseEditorState extends State<StickmanPoseEditor> {
                                 onPressed: _saveObjToFile,
                                 child: const Text("OBJ"),
                               ),
+                              if (widget.controller.mode == EditorMode.animate && widget.controller.activeClip != null) ...[
+                                const SizedBox(width: 16),
+                                ElevatedButton(
+                                  onPressed: _exportZip,
+                                  style: ElevatedButton.styleFrom(backgroundColor: Colors.purple),
+                                  child: const Text("ZIP"),
+                                ),
+                              ],
                             ],
                           ),
                         ],
@@ -612,6 +629,31 @@ class _StickmanPoseEditorState extends State<StickmanPoseEditor> {
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text("OBJ File Ready to Save/Share")),
+      );
+    }
+  }
+
+  void _applyBoneToAll() {
+    widget.controller.propagatePoseToAllFrames();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text("Applied ${widget.controller.lastModifiedBone} to all frames")),
+    );
+  }
+
+  Future<void> _exportZip() async {
+    if (widget.controller.activeClip == null) return;
+
+    final bytes = await StickmanExporter.exportClipToZip(widget.controller.activeClip!);
+
+    final directory = await getTemporaryDirectory();
+    final file = File('${directory.path}/animation.zip');
+    await file.writeAsBytes(bytes);
+
+    await Share.shareXFiles([XFile(file.path)], text: 'Stickman Animation ZIP');
+
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Animation saved as ZIP! Unzip and import OBJ sequence in Blender.")),
       );
     }
   }
