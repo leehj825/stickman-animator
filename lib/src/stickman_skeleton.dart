@@ -45,7 +45,7 @@ class StickmanSkeleton {
 
   // Visual Properties
   double headRadius = 6.0;
-  double strokeWidth = 3.0;
+  double strokeWidth = 4.6;
 
   // Cache for fast access to standard bones
   // Map ID -> Node
@@ -54,43 +54,35 @@ class StickmanSkeleton {
   StickmanSkeleton() {
     // Build Default Hierarchy
     // Hip is root
-    root = StickmanNode('hip', v.Vector3.zero());
+    root = StickmanNode('hip', v.Vector3(1.0, 0.0, 0.0));
 
-    final neck = StickmanNode('neck', v.Vector3.zero());
+    final neck = StickmanNode('neck', v.Vector3(0.0, -14.7, 0.0));
     root.children.add(neck);
 
     // Head as child of Neck
-    final head = StickmanNode('head', v.Vector3.zero());
+    final head = StickmanNode('head', v.Vector3(0.0, -22.0, 0.0));
     neck.children.add(head);
 
-    final lShoulder = StickmanNode('lShoulder', v.Vector3.zero());
-    final rShoulder = StickmanNode('rShoulder', v.Vector3.zero());
-    neck.children.add(lShoulder);
-    neck.children.add(rShoulder);
-
-    final lElbow = StickmanNode('lElbow', v.Vector3.zero());
-    lShoulder.children.add(lElbow);
-    final lHand = StickmanNode('lHand', v.Vector3.zero());
+    // Arms connect directly to Neck
+    final lElbow = StickmanNode('lElbow', v.Vector3(-6.1, -7.2, 0.0));
+    neck.children.add(lElbow);
+    final lHand = StickmanNode('lHand', v.Vector3(-10.0, 0.0, 0.0));
     lElbow.children.add(lHand);
 
-    final rElbow = StickmanNode('rElbow', v.Vector3.zero());
-    rShoulder.children.add(rElbow);
-    final rHand = StickmanNode('rHand', v.Vector3.zero());
+    final rElbow = StickmanNode('rElbow', v.Vector3(6.2, -7.4, 0.0));
+    neck.children.add(rElbow);
+    final rHand = StickmanNode('rHand', v.Vector3(10.0, 0.0, 0.0));
     rElbow.children.add(rHand);
 
-    final lHip = StickmanNode('lHip', v.Vector3.zero());
-    final rHip = StickmanNode('rHip', v.Vector3.zero());
-    root.children.add(lHip);
-    root.children.add(rHip);
-
-    final lKnee = StickmanNode('lKnee', v.Vector3.zero());
-    lHip.children.add(lKnee);
-    final lFoot = StickmanNode('lFoot', v.Vector3.zero());
+    // Legs connect directly to Hip (Root)
+    final lKnee = StickmanNode('lKnee', v.Vector3(-4.1, 11.8, 0.0));
+    root.children.add(lKnee);
+    final lFoot = StickmanNode('lFoot', v.Vector3(-7.2, 24.5, 0.0));
     lKnee.children.add(lFoot);
 
-    final rKnee = StickmanNode('rKnee', v.Vector3.zero());
-    rHip.children.add(rKnee);
-    final rFoot = StickmanNode('rFoot', v.Vector3.zero());
+    final rKnee = StickmanNode('rKnee', v.Vector3(5.0, 12.0, 0.0));
+    root.children.add(rKnee);
+    final rFoot = StickmanNode('rFoot', v.Vector3(7.9, 24.3, 0.0));
     rKnee.children.add(rFoot);
 
     _refreshNodeCache();
@@ -134,18 +126,6 @@ class StickmanSkeleton {
   v.Vector3? get head => _nodes['head']?.position;
   void setHead(v.Vector3 v) => _nodes['head']?.position.setFrom(v);
 
-  v.Vector3 get lShoulder => _nodes['lShoulder']!.position;
-  set lShoulder(v.Vector3 v) => _nodes['lShoulder']!.position.setFrom(v);
-
-  v.Vector3 get rShoulder => _nodes['rShoulder']!.position;
-  set rShoulder(v.Vector3 v) => _nodes['rShoulder']!.position.setFrom(v);
-
-  v.Vector3 get lHip => _nodes['lHip']!.position;
-  set lHip(v.Vector3 v) => _nodes['lHip']!.position.setFrom(v);
-
-  v.Vector3 get rHip => _nodes['rHip']!.position;
-  set rHip(v.Vector3 v) => _nodes['rHip']!.position.setFrom(v);
-
   v.Vector3 get lKnee => _nodes['lKnee']!.position;
   set lKnee(v.Vector3 v) => _nodes['lKnee']!.position.setFrom(v);
 
@@ -170,6 +150,22 @@ class StickmanSkeleton {
   v.Vector3 get rHand => _nodes['rHand']!.position;
   set rHand(v.Vector3 v) => _nodes['rHand']!.position.setFrom(v);
 
+  // Dynamic access
+  v.Vector3? getBone(String name) {
+    if (name == 'head') return head;
+    if (_nodes.containsKey(name)) {
+      return _nodes[name]!.position;
+    }
+    return null;
+  }
+
+  void setBone(String name, v.Vector3 value) {
+    if (name == 'head') {
+      head?.setFrom(value);
+    } else if (_nodes.containsKey(name)) {
+      _nodes[name]!.position.setFrom(value);
+    }
+  }
 
   /// Returns a deep copy of the skeleton
   StickmanSkeleton clone() {

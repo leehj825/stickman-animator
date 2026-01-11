@@ -138,6 +138,12 @@ class StickmanPainter extends CustomPainter {
 
       for (var child in node.children) {
          final end = toScreen(child.position);
+
+         // New Topology Logic: Direct Lines (Neck->Elbow, Hip->Knee)
+         // This is handled automatically by the hierarchy traversal
+         // because the children list now reflects the new topology.
+         // e.g., Neck children includes Elbows.
+
          canvas.drawLine(start, end, paint);
          drawNode(child);
       }

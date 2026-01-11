@@ -1,9 +1,11 @@
 import 'dart:math';
 import 'package:vector_math/vector_math_64.dart' as v;
 import 'stickman_skeleton.dart';
+import 'stickman_animation.dart';
 
 enum WeaponType { none, sword, axe, bow }
 enum StickmanState { animating, ragdoll }
+enum EditorMode { pose, animate }
 
 /// Interface for movement strategies
 abstract class MotionStrategy {
@@ -36,13 +38,7 @@ class ProceduralMotionStrategy implements MotionStrategy {
       controller.skeleton.setHead(controller.skeleton.neck + v.Vector3(0, -8, 0));
     }
 
-    // 2. Shoulders & Hips (Relative to body)
-    controller.skeleton.lShoulder = controller.skeleton.neck.clone();
-    controller.skeleton.rShoulder = controller.skeleton.neck.clone();
-    controller.skeleton.lHip = controller.skeleton.hip.clone();
-    controller.skeleton.rHip = controller.skeleton.hip.clone();
-
-    // 3. Limbs (Run Cycle)
+    // 2. Limbs (Run Cycle)
     double legSwing = sin(controller.time) * 0.8 * controller.runWeight;
     double armSwing = cos(controller.time) * 0.8 * controller.runWeight;
 
@@ -52,9 +48,13 @@ class ProceduralMotionStrategy implements MotionStrategy {
       return rot.transform(point);
     }
 
-    // Legs
-    controller.skeleton.lKnee = rotateX(v.Vector3(-3, 12, 0), legSwing) + controller.skeleton.lHip;
-    controller.skeleton.rKnee = rotateX(v.Vector3(3, 12, 0), -legSwing) + controller.skeleton.rHip;
+    // Legs - Connect to Hip (Root)
+    // Adjust local offsets since we don't have side-hips anymore.
+    // Offsetting knees slightly to sides to avoid overlap? Or strict stick figure?
+    // Request says "Classic Stick Figure". Usually limbs come from same point or very close.
+    // Let's use slight X offset for visual separation, but relative to Hip directly.
+    controller.skeleton.lKnee = rotateX(v.Vector3(-3, 12, 0), legSwing) + controller.skeleton.hip;
+    controller.skeleton.rKnee = rotateX(v.Vector3(3, 12, 0), -legSwing) + controller.skeleton.hip;
     controller.skeleton.lFoot = rotateX(v.Vector3(-3, 12, 0), legSwing + 0.2) + controller.skeleton.lKnee;
     controller.skeleton.rFoot = rotateX(v.Vector3(3, 12, 0), -legSwing + 0.2) + controller.skeleton.rKnee;
 
@@ -72,8 +72,9 @@ class ProceduralMotionStrategy implements MotionStrategy {
       rArmAngle = -0.5;
     }
 
-    controller.skeleton.lElbow = rotateX(v.Vector3(-6, 10, 0), lArmAngle) + controller.skeleton.lShoulder;
-    controller.skeleton.rElbow = rotateX(v.Vector3(6, 10, 0), rArmAngle) + controller.skeleton.rShoulder;
+    // Arms - Connect to Neck
+    controller.skeleton.lElbow = rotateX(v.Vector3(-6, 10, 0), lArmAngle) + controller.skeleton.neck;
+    controller.skeleton.rElbow = rotateX(v.Vector3(6, 10, 0), rArmAngle) + controller.skeleton.neck;
 
     controller.skeleton.lHand = rotateX(v.Vector3(0, 10, 0), lArmAngle - 0.3) + controller.skeleton.lElbow;
     controller.skeleton.rHand = rotateX(v.Vector3(0, 10, 0), rArmAngle - 0.3) + controller.skeleton.rElbow;
@@ -131,6 +132,7 @@ class PoseMotionStrategy implements MotionStrategy {
 class StickmanController {
   final StickmanSkeleton skeleton = StickmanSkeleton();
   StickmanState state = StickmanState.animating;
+  EditorMode mode = EditorMode.pose;
 
   late MotionStrategy _activeStrategy;
 
@@ -143,15 +145,41 @@ class StickmanController {
   double _runWeight = 0.0;
   double _facingAngle = 0.0;
 
+  // Animation Mode State
+  StickmanClip? activeClip;
+  double currentFrameIndex = 0.0; // Double for smooth playback interpolation if needed
+  bool isPlaying = false;
+  StickmanSkeleton? _backupPose; // Preservation for switching modes
+
   // Action State
   bool isAttacking = false;
   double _attackTimer = 0.0;
+
+  // Propagation State
+  String? lastModifiedBone;
 
   // Physics State
   _RagdollPhysics? _ragdoll;
 
   StickmanController({this.scale = 1.0, this.weaponType = WeaponType.none}) {
     _activeStrategy = ProceduralMotionStrategy();
+  }
+
+  void setMode(EditorMode newMode) {
+    if (mode == newMode) return;
+
+    if (newMode == EditorMode.animate) {
+      // Entering Animate Mode: Save current pose
+      _backupPose = skeleton.clone();
+    } else {
+      // Entering Pose Mode: Restore pose if exists
+      if (_backupPose != null) {
+        skeleton.lerp(_backupPose!, 1.0); // Full copy
+        _backupPose = null;
+      }
+      isPlaying = false;
+    }
+    mode = newMode;
   }
 
   // Getters for Strategy to access private fields if they were private
@@ -191,7 +219,12 @@ class StickmanController {
       return;
     }
 
-    // --- STANDARD ANIMATION LOGIC ---
+    if (mode == EditorMode.animate && activeClip != null) {
+      _updateAnimationMode(dt);
+      return;
+    }
+
+    // --- STANDARD ANIMATION LOGIC (Pose Mode) ---
     _time += dt * 10;
 
     // Speed & Direction Logic
@@ -219,6 +252,61 @@ class StickmanController {
 
     _activeStrategy.update(dt, this);
   }
+
+  void _updateAnimationMode(double dt) {
+    if (activeClip == null) return;
+
+    if (isPlaying) {
+      currentFrameIndex += dt * activeClip!.fps;
+      if (currentFrameIndex >= activeClip!.frameCount) {
+        currentFrameIndex = 0; // Loop
+      }
+    }
+
+    // Update skeleton from keyframe
+    // If not playing (paused), we rely on currentFrameIndex set by UI slider
+    int frameIdx = currentFrameIndex.floor();
+    final keyframe = activeClip!.getFrame(frameIdx);
+
+    // Copy pose from keyframe to active skeleton so we can see/edit it
+    // We use lerp with t=1.0 to fully copy positions (and properties)
+    skeleton.lerp(keyframe.pose, 1.0);
+  }
+
+  /// Updates the current keyframe with the current skeleton pose.
+  /// Call this when the user edits the pose while in Animate mode.
+  void saveCurrentPoseToFrame() {
+    if (mode == EditorMode.animate && activeClip != null) {
+       int frameIdx = currentFrameIndex.floor();
+       activeClip!.updateFrame(frameIdx, skeleton);
+    }
+  }
+
+  /// Propagates the pose of the last modified bone to all frames in the active clip.
+  void propagatePoseToAllFrames() {
+    if (activeClip == null || lastModifiedBone == null) return;
+
+    // Get the target position of the last modified bone from the current skeleton
+    final targetPosition = skeleton.getBone(lastModifiedBone!);
+    if (targetPosition == null) return;
+
+    // Iterate through all keyframes and apply the bone position
+    for (int i = 0; i < activeClip!.frameCount; i++) {
+      final keyframe = activeClip!.getFrame(i);
+      // We need to modify the pose in the keyframe.
+      // Since getFrame returns a reference to the keyframe object which holds a skeleton,
+      // we can modify it directly via setBone if we want to mutate.
+      // But typically we should treat keyframes as data.
+      // However, StickmanClip.updateFrame clones.
+      // Here we want batch update.
+
+      // We can access the pose directly
+      keyframe.pose.setBone(lastModifiedBone!, targetPosition);
+    }
+
+    // Force update of current view just in case
+    // (Actually _updateAnimationMode loop handles it next frame)
+  }
 }
 
 /// 3. PHYSICS ENGINE (Verlet Integration)
@@ -245,24 +333,24 @@ class _RagdollPhysics {
   List<_StickConstraint> sticks = [];
 
   // Used for cross-linking specific parts if they exist
-  _RagdollPoint? hip, lS, rS, lH, rH;
+  _RagdollPoint? hip, neck, lE, rE, lK, rK;
 
   _RagdollPhysics(StickmanSkeleton skel) {
     final pointMap = <String, _RagdollPoint>{};
 
     // 1. Create Points recursively
     void buildPoints(StickmanNode node) {
-      var p = _RagdollPoint(node.position, node: node); // Use reference to position? No, separate physics state.
-      // Actually RagdollPoint copies the vector.
+      var p = _RagdollPoint(node.position, node: node);
       points.add(p);
       pointMap[node.id] = p;
 
-      // Assign special points for cross-linking
+      // Assign special points for constraints
       if (node.id == 'hip') hip = p;
-      if (node.id == 'lShoulder') lS = p;
-      if (node.id == 'rShoulder') rS = p;
-      if (node.id == 'lHip') lH = p;
-      if (node.id == 'rHip') rH = p;
+      if (node.id == 'neck') neck = p;
+      if (node.id == 'lElbow') lE = p;
+      if (node.id == 'rElbow') rE = p;
+      if (node.id == 'lKnee') lK = p;
+      if (node.id == 'rKnee') rK = p;
 
       for (var c in node.children) {
         buildPoints(c);
@@ -270,10 +358,14 @@ class _RagdollPhysics {
     }
     buildPoints(skel.root);
 
-    // 2. Create Sticks (Constraints) - Defines the "Body Shape"
+    // 2. Create Sticks (Constraints)
     void link(_RagdollPoint a, _RagdollPoint b) => sticks.add(_StickConstraint(a, b));
 
     // Automatically link parents to children
+    // With new topology:
+    // Hip -> Neck, Hip -> Knee
+    // Neck -> Elbow
+    // This happens automatically via tree traversal
     void buildConstraints(StickmanNode node) {
       if (!pointMap.containsKey(node.id)) return;
       var p1 = pointMap[node.id]!;
@@ -287,13 +379,7 @@ class _RagdollPhysics {
     }
     buildConstraints(skel.root);
 
-    // Optional: Cross-links for stability (prevents collapsing too easily)
-    // Only if the specific nodes exist
-    if (lS != null && rS != null) link(lS!, rS!); // Shoulder width
-    if (lH != null && rH != null) link(lH!, rH!); // Hip width
-    if (lS != null && lH != null) link(lS!, lH!); // Left Torso side
-    if (rS != null && rH != null) link(rS!, rH!); // Right Torso side
-    // Hip to neck is handled by tree traversal (hip -> neck)
+    // No cross-links needed for classic stickman as limbs connect directly to spine.
   }
 
   void update(double dt) {
