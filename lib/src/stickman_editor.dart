@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:vector_math/vector_math_64.dart' as v;
 import 'package:file_picker/file_picker.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:share_plus/share_plus.dart';
 import 'stickman_skeleton.dart';
 import 'stickman_animator.dart';
 import 'stickman_painter.dart';
@@ -545,16 +547,24 @@ class _StickmanPoseEditorState extends State<StickmanPoseEditor> {
 
   Future<void> _saveObjToFile() async {
     final obj = StickmanExporter.generateObjString(widget.controller.skeleton);
-    String? outputFile = await FilePicker.platform.saveFile(
-      dialogTitle: 'Save OBJ File',
-      fileName: 'stickman.obj',
-      type: FileType.any,
-    );
 
-    if (outputFile != null) {
-      final file = File(outputFile);
+    if (Platform.isAndroid || Platform.isIOS) {
+      final directory = await getTemporaryDirectory();
+      final file = File('${directory.path}/stickman.obj');
       await file.writeAsString(obj);
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("OBJ file saved!")));
+      await Share.shareXFiles([XFile(file.path)], text: 'Stickman 3D Model');
+    } else {
+      String? outputFile = await FilePicker.platform.saveFile(
+        dialogTitle: 'Save OBJ File',
+        fileName: 'stickman.obj',
+        type: FileType.any,
+      );
+
+      if (outputFile != null) {
+        final file = File(outputFile);
+        await file.writeAsString(obj);
+        if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("OBJ file saved!")));
+      }
     }
   }
 
@@ -567,16 +577,23 @@ class _StickmanPoseEditorState extends State<StickmanPoseEditor> {
     if (widget.controller.activeClip == null) return;
     final bytes = await StickmanExporter.exportClipToZip(widget.controller.activeClip!);
 
-    String? outputFile = await FilePicker.platform.saveFile(
-      dialogTitle: 'Save Animation ZIP',
-      fileName: 'animation.zip',
-      type: FileType.any,
-    );
-
-    if (outputFile != null) {
-      final file = File(outputFile);
+    if (Platform.isAndroid || Platform.isIOS) {
+      final directory = await getTemporaryDirectory();
+      final file = File('${directory.path}/animation.zip');
       await file.writeAsBytes(bytes);
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("ZIP file saved!")));
+      await Share.shareXFiles([XFile(file.path)], text: 'Stickman Animation ZIP');
+    } else {
+      String? outputFile = await FilePicker.platform.saveFile(
+        dialogTitle: 'Save Animation ZIP',
+        fileName: 'animation.zip',
+        type: FileType.any,
+      );
+
+      if (outputFile != null) {
+        final file = File(outputFile);
+        await file.writeAsBytes(bytes);
+        if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("ZIP file saved!")));
+      }
     }
   }
 }

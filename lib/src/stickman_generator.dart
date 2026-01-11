@@ -362,8 +362,8 @@ class StickmanGenerator {
   static StickmanClip generateEmpty(StickmanSkeleton? style) {
     List<StickmanKeyframe> frames = [];
     for(int i=0; i<30; i++) {
-        StickmanSkeleton p = StickmanSkeleton();
-        _applyStyle(p, style);
+        // Clone the style (current pose) if available, else default
+        StickmanSkeleton p = style?.clone() ?? StickmanSkeleton();
         frames.add(StickmanKeyframe(pose: p, frameIndex: i));
     }
     return StickmanClip(name: "Custom", keyframes: frames, fps: 30, isLooping: true);
