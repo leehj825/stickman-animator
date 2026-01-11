@@ -45,23 +45,43 @@ class _StickmanPoseEditorState extends State<StickmanPoseEditor> {
     super.initState();
     _refreshNodeCache();
     widget.controller.setStrategy(ManualMotionStrategy());
+    // We do NOT generate defaults here anymore.
+    // We wait until the first mode switch or we just initialize empty.
+    // If we init here, they won't have the user's custom pose if they edit it later.
+    // But to show something on first load, we can init defaults.
+    _regenerateDefaultClips();
+  }
 
-    // FIX: Generate defaults ONLY if the project is empty.
-    if (_projectClips.isEmpty) {
-      _projectClips = [
-        StickmanGenerator.generateRun(widget.controller.skeleton),
-        StickmanGenerator.generateJump(widget.controller.skeleton),
-        StickmanGenerator.generateKick(widget.controller.skeleton),
-      ];
+  // --- FIX: REGENERATE DEFAULTS ---
+  // This ensures that "Run", "Jump", "Kick" always use the user's current
+  // limb lengths (Pose) when they enter Animate mode.
+  void _regenerateDefaultClips() {
+    final style = widget.controller.skeleton;
+
+    void updateClip(String name, StickmanClip Function() gen) {
+      final index = _projectClips.indexWhere((c) => c.name == name);
+      final newClip = gen();
+      if (index != -1) {
+        _projectClips[index] = newClip;
+      } else {
+        _projectClips.add(newClip);
+      }
     }
+
+    updateClip("Run", () => StickmanGenerator.generateRun(style));
+    updateClip("Jump", () => StickmanGenerator.generateJump(style));
+    updateClip("Kick", () => StickmanGenerator.generateKick(style));
   }
 
   void _switchMode(EditorMode mode) {
     if (mode == EditorMode.animate) {
-      // FIX: Do NOT regenerate clips. Only Sync visual styles.
+      // FIX: FORCE REGENERATE DEFAULTS from current Pose
+      // This applies the limb length/position changes to the animation.
+      _regenerateDefaultClips();
+
+      // Also Sync style (Head radius/stroke)
       _syncProjectStyles();
 
-      // Auto-select first clip if none selected
       if (widget.controller.activeClip == null && _projectClips.isNotEmpty) {
         _activateClip(_projectClips.first);
       }
@@ -71,8 +91,7 @@ class _StickmanPoseEditorState extends State<StickmanPoseEditor> {
     });
   }
 
-  // --- Sync Logic ---
-  /// Updates only the visual style of all clips to match the current Pose settings.
+  // Sync style settings (Line/Head) to the animation frames
   void _syncProjectStyles() {
     final currentStyle = widget.controller.skeleton;
     for (var clip in _projectClips) {
@@ -84,13 +103,7 @@ class _StickmanPoseEditorState extends State<StickmanPoseEditor> {
   }
 
   void _activateClip(StickmanClip clip) {
-    // Sync style for this clip immediately
-    final currentStyle = widget.controller.skeleton;
-    for (var frame in clip.keyframes) {
-      frame.pose.headRadius = currentStyle.headRadius;
-      frame.pose.strokeWidth = currentStyle.strokeWidth;
-    }
-
+    _syncProjectStyles(); // Ensure this clip is fresh style-wise
     setState(() {
       widget.controller.activeClip = clip;
       widget.controller.currentFrameIndex = 0.0;
@@ -98,7 +111,6 @@ class _StickmanPoseEditorState extends State<StickmanPoseEditor> {
     });
   }
 
-  // --- NEW: Add Animation Dialog ---
   void _promptAddAnimation() {
     final textController = TextEditingController(text: "New Animation");
     showDialog(
@@ -260,7 +272,6 @@ class _StickmanPoseEditorState extends State<StickmanPoseEditor> {
           backgroundColor: Colors.grey[900],
           body: Stack(
             children: [
-              // 3D View and Gestures
               GestureDetector(
                 behavior: HitTestBehavior.opaque,
                 onPanUpdate: (details) {
@@ -288,7 +299,6 @@ class _StickmanPoseEditorState extends State<StickmanPoseEditor> {
                 ),
               ),
 
-              // Handles
               ..._nodes.values.map((node) {
                 final screenPos = _toScreen(node.position, size);
                 final isSelected = node.id == _selectedNodeId;
@@ -315,7 +325,6 @@ class _StickmanPoseEditorState extends State<StickmanPoseEditor> {
               SafeArea(
                 child: Stack(
                   children: [
-                    // Top Bar
                     Positioned(
                       top: 10, left: 0, right: 0,
                       child: Center(
@@ -340,7 +349,6 @@ class _StickmanPoseEditorState extends State<StickmanPoseEditor> {
                       ),
                     ),
 
-                    // Left Column (Scrollable)
                     Positioned(
                       top: 60, left: 10, bottom: 120, width: 80,
                       child: SingleChildScrollView(
@@ -388,7 +396,6 @@ class _StickmanPoseEditorState extends State<StickmanPoseEditor> {
                       ),
                     ),
 
-                    // Right Column (Scrollable)
                     Positioned(
                       top: 60, right: 10, bottom: 120, width: 80,
                       child: SingleChildScrollView(
@@ -436,7 +443,6 @@ class _StickmanPoseEditorState extends State<StickmanPoseEditor> {
                       ),
                     ),
 
-                    // Bottom: Animation/Export
                     Positioned(
                       bottom: 10, left: 0, right: 0,
                       child: Column(
@@ -448,7 +454,6 @@ class _StickmanPoseEditorState extends State<StickmanPoseEditor> {
                               color: Colors.black54,
                               child: Column(
                                 children: [
-                                  // Save/Load Project Row
                                   Row(
                                     mainAxisAlignment: MainAxisAlignment.center,
                                     children: [
@@ -480,17 +485,12 @@ class _StickmanPoseEditorState extends State<StickmanPoseEditor> {
                                     ],
                                   ),
                                   SizedBox(height: 5),
-
-                                  // Dynamic Clip Selector
                                   SingleChildScrollView(
                                     scrollDirection: Axis.horizontal,
                                     child: Row(
                                       mainAxisAlignment: MainAxisAlignment.center,
                                       children: [
-                                        // Existing Animations
                                         ..._projectClips.map((clip) => _clipButton(clip.name, () => _activateClip(clip))),
-
-                                        // Add New Animation Button
                                         Padding(
                                           padding: const EdgeInsets.symmetric(horizontal: 4),
                                           child: IconButton(
@@ -502,8 +502,6 @@ class _StickmanPoseEditorState extends State<StickmanPoseEditor> {
                                       ],
                                     ),
                                   ),
-
-                                  // Playback Controls
                                   Row(
                                     children: [
                                       IconButton(
@@ -513,8 +511,6 @@ class _StickmanPoseEditorState extends State<StickmanPoseEditor> {
                                         ),
                                         onPressed: _togglePlayback,
                                       ),
-
-                                      // "All" Text Button
                                       if (widget.controller.lastModifiedBone != null)
                                         TextButton(
                                           onPressed: _applyBoneToAll,
@@ -524,7 +520,6 @@ class _StickmanPoseEditorState extends State<StickmanPoseEditor> {
                                           ),
                                           child: Text("All", style: TextStyle(fontWeight: FontWeight.bold)),
                                         ),
-
                                       Expanded(
                                         child: Slider(
                                           value: widget.controller.currentFrameIndex.clamp(0.0, (widget.controller.activeClip?.frameCount.toDouble() ?? 1) - 0.01),
@@ -545,7 +540,6 @@ class _StickmanPoseEditorState extends State<StickmanPoseEditor> {
                               ),
                             ),
                           SizedBox(height: 10),
-                          // Export Row
                           Row(
                             mainAxisSize: MainAxisSize.min,
                             children: [
@@ -574,100 +568,3 @@ class _StickmanPoseEditorState extends State<StickmanPoseEditor> {
       },
     );
   }
-
-  Widget _viewButton(String label, CameraView view) {
-    bool selected = _cameraView == view;
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 2),
-      child: InkWell(
-        onTap: () => setState(() => _cameraView = view),
-        child: Container(
-          width: 50, padding: const EdgeInsets.symmetric(vertical: 6),
-          alignment: Alignment.center,
-          decoration: BoxDecoration(color: selected ? Colors.blueAccent : Colors.transparent, borderRadius: BorderRadius.circular(4)),
-          child: Text(label, style: const TextStyle(color: Colors.white, fontSize: 10)),
-        ),
-      ),
-    );
-  }
-
-  Widget _axisButton(String label, AxisMode mode, [Color color = Colors.white]) {
-    bool selected = _axisMode == mode;
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 2),
-      child: InkWell(
-        onTap: () => setState(() => _axisMode = mode),
-        child: Container(
-          width: 40, padding: const EdgeInsets.symmetric(vertical: 6),
-          alignment: Alignment.center,
-          decoration: BoxDecoration(color: selected ? Colors.amber : Colors.transparent, borderRadius: BorderRadius.circular(4)),
-          child: Text(label, style: TextStyle(color: selected ? Colors.black : color, fontSize: 12, fontWeight: FontWeight.bold)),
-        ),
-      ),
-    );
-  }
-
-  Widget _clipButton(String label, VoidCallback onTap) {
-    bool isActive = widget.controller.activeClip?.name == label;
-    return Padding(
-      padding: EdgeInsets.symmetric(horizontal: 4),
-      child: ElevatedButton(
-        style: ElevatedButton.styleFrom(
-          backgroundColor: isActive ? Colors.blue : Colors.grey[700],
-          foregroundColor: Colors.white,
-          padding: EdgeInsets.symmetric(horizontal: 10, vertical: 0),
-        ),
-        onPressed: onTap,
-        child: Text(label, style: TextStyle(fontSize: 12)),
-      ),
-    );
-  }
-
-  void _copyPoseToClipboard() {
-    final skel = widget.controller.skeleton;
-    final buffer = StringBuffer();
-    String format(v.Vector3 v) => "${v.x.toStringAsFixed(1)}, ${v.y.toStringAsFixed(1)}, ${v.z.toStringAsFixed(1)}";
-    buffer.writeln("// Pose Data...");
-    buffer.writeln(skel.toJson().toString());
-    Clipboard.setData(ClipboardData(text: buffer.toString()));
-    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Dart Code copied!")));
-  }
-
-  Future<void> _saveObjToFile() async {
-    final obj = StickmanExporter.generateObjString(widget.controller.skeleton);
-    if (Platform.isAndroid || Platform.isIOS) {
-      final directory = await getTemporaryDirectory();
-      final file = File('${directory.path}/stickman.obj');
-      await file.writeAsString(obj);
-      await Share.shareXFiles([XFile(file.path)], text: 'Stickman 3D Model');
-    } else {
-      String? outputFile = await FilePicker.platform.saveFile(dialogTitle: 'Save OBJ', fileName: 'stickman.obj', type: FileType.any);
-      if (outputFile != null) {
-        await File(outputFile).writeAsString(obj);
-        if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("OBJ Saved!")));
-      }
-    }
-  }
-
-  void _applyBoneToAll() {
-    widget.controller.propagatePoseToAllFrames();
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Applied ${widget.controller.lastModifiedBone} to all frames")));
-  }
-
-  Future<void> _exportZip() async {
-    if (widget.controller.activeClip == null) return;
-    final bytes = await StickmanExporter.exportClipToZip(widget.controller.activeClip!);
-    if (Platform.isAndroid || Platform.isIOS) {
-      final directory = await getTemporaryDirectory();
-      final file = File('${directory.path}/animation.zip');
-      await file.writeAsBytes(bytes);
-      await Share.shareXFiles([XFile(file.path)], text: 'Stickman Animation ZIP');
-    } else {
-      String? outputFile = await FilePicker.platform.saveFile(dialogTitle: 'Save ZIP', fileName: 'animation.zip', type: FileType.any);
-      if (outputFile != null) {
-        await File(outputFile).writeAsBytes(bytes);
-        if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("ZIP Saved!")));
-      }
-    }
-  }
-}

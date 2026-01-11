@@ -5,7 +5,6 @@ import 'stickman_animation.dart';
 
 class StickmanGenerator {
 
-  // Apply style helper
   static void _applyStyle(StickmanSkeleton pose, StickmanSkeleton? style) {
     if (style != null) {
       pose.headRadius = style.headRadius;
@@ -13,27 +12,24 @@ class StickmanGenerator {
     }
   }
 
-  // Helper to attach Head to Neck
   static void _updateHead(StickmanSkeleton pose) {
      if(pose.head != null) {
        pose.setHead(pose.neck + v.Vector3(0, -7.3, 0));
      }
   }
 
-  // --- 1. REFINED MARATHON RUN (Dynamic Lengths Fix) ---
+  // --- 1. REFINED MARATHON RUN ---
   static StickmanClip generateRun(StickmanSkeleton? style) {
     List<StickmanKeyframe> frames = [];
     int totalFrames = 24;
 
-    // MEASURE THE RIG (Dynamic Proportions)
+    // Dynamic Lengths
     double legLen = 13.0;
     double armLen = 10.0;
-
     if (style != null) {
       legLen = style.hip.distanceTo(style.rKnee);
       armLen = style.neck.distanceTo(style.rElbow);
     }
-
     double strideScale = legLen / 13.0;
 
     for (int i = 0; i < totalFrames; i++) {
@@ -43,7 +39,6 @@ class StickmanGenerator {
       StickmanSkeleton pose = StickmanSkeleton();
       _applyStyle(pose, style);
 
-      // A. Hips & Spine
       pose.hip.y = cos(angle * 2) * 1.5;
       double hipTwist = sin(angle) * 0.15;
       _rotateY(pose.hip, hipTwist);
@@ -51,11 +46,9 @@ class StickmanGenerator {
       pose.neck.setValues(0, -25 + pose.hip.y, 4);
       _rotateY(pose.neck, -hipTwist * 1.5);
 
-      // B. Arms (Opposite) - Use Measured Length
       _setActiveArm(pose, isLeft: true, angle: angle + pi, length: armLen);
       _setActiveArm(pose, isLeft: false, angle: angle, length: armLen);
 
-      // C. Legs - Use Measured Length
       _setSmoothLeg(pose, isLeft: true, angle: angle, length: legLen, strideScale: strideScale);
       _setSmoothLeg(pose, isLeft: false, angle: angle + pi, length: legLen, strideScale: strideScale);
 
@@ -65,7 +58,7 @@ class StickmanGenerator {
     return StickmanClip(name: "Run", keyframes: frames, fps: 30, isLooping: true);
   }
 
-  // --- 2. ROUNDHOUSE KICK (Rotational Arms Fix) ---
+  // --- 2. ROUNDHOUSE KICK (Fixed Elbows) ---
   static StickmanClip generateKick(StickmanSkeleton? style) {
     List<StickmanKeyframe> frames = [];
     int totalFrames = 34;
@@ -77,7 +70,6 @@ class StickmanGenerator {
       shinLen = style.rKnee.distanceTo(style.rFoot);
     }
 
-    // Stance
     StickmanSkeleton stance = StickmanSkeleton();
     _applyStyle(stance, style);
     stance.lFoot.z = 5; stance.rFoot.z = -5;
@@ -91,8 +83,8 @@ class StickmanGenerator {
       double leanAngle = 0.0;
       double hipSlide = 0.0;
 
+      // Leg Logic
       if (t < 0.3) {
-        // PHASE 1: CHAMBER
         double subT = t / 0.3;
         leanAngle = _lerp(0, -0.5, subT);
         hipSlide = _lerp(0, -5, subT);
@@ -105,7 +97,6 @@ class StickmanGenerator {
         pose.rFoot = pose.rKnee + _sphericalToCartesian(shinLen, thighPitch + shinPitch, thighYaw);
 
       } else if (t < 0.5) {
-        // PHASE 2: EXTENSION
         double subT = (t - 0.3) / 0.2;
         leanAngle = -0.6;
         hipSlide = -5;
@@ -118,7 +109,6 @@ class StickmanGenerator {
         pose.rFoot = pose.rKnee + _sphericalToCartesian(shinLen, thighPitch + shinPitch, thighYaw);
 
       } else if (t < 0.7) {
-        // PHASE 3: RECOIL
         double subT = (t - 0.5) / 0.2;
         leanAngle = -0.5;
         hipSlide = -5;
@@ -131,7 +121,6 @@ class StickmanGenerator {
         pose.rFoot = pose.rKnee + _sphericalToCartesian(shinLen, thighPitch + shinPitch, thighYaw);
 
       } else {
-        // PHASE 4: RETURN
         double subT = (t - 0.7) / 0.3;
         leanAngle = _lerp(-0.5, 0, subT);
         hipSlide = _lerp(-5, 0, subT);
@@ -149,14 +138,25 @@ class StickmanGenerator {
       _rotateX(pose.neck, leanAngle);
       pose.neck.add(pose.hip);
 
-      // Apply Arm Positions (Rotated with Body)
+      // --- FIX: ARMS & ELBOWS ROTATE WITH BODY ---
+
+      // Left Arm (Guard Face)
       v.Vector3 lArmOffset = v.Vector3(-8, 5, 10);
       _rotateX(lArmOffset, leanAngle);
       pose.lHand = pose.neck + lArmOffset;
 
+      v.Vector3 lElbowOffset = v.Vector3(-6, 8, 2); // Elbow tucked
+      _rotateX(lElbowOffset, leanAngle);
+      pose.lElbow = pose.neck + lElbowOffset;
+
+      // Right Arm (Balance)
       v.Vector3 rArmOffset = v.Vector3(8, 5, 2);
       _rotateX(rArmOffset, leanAngle);
       pose.rHand = pose.neck + rArmOffset;
+
+      v.Vector3 rElbowOffset = v.Vector3(6, 8, 0); // Elbow out
+      _rotateX(rElbowOffset, leanAngle);
+      pose.rElbow = pose.neck + rElbowOffset;
 
       _updateHead(pose);
       frames.add(StickmanKeyframe(pose: pose, frameIndex: i));
@@ -164,7 +164,7 @@ class StickmanGenerator {
     return StickmanClip(name: "Kick", keyframes: frames, fps: 30, isLooping: false);
   }
 
-  // --- 3. SQUAT JUMP (Dynamic Lengths) ---
+  // --- 3. SQUAT JUMP ---
   static StickmanClip generateJump(StickmanSkeleton? style) {
     List<StickmanKeyframe> frames = [];
     int totalFrames = 30;
@@ -182,14 +182,12 @@ class StickmanGenerator {
       double jumpY = airTime * 35.0;
 
       if (t < 0.3) {
-        // SQUAT
         double subT = t / 0.3;
         double squash = sin(subT * pi) * 12;
         pose.hip.y += squash;
         double lean = squash * 0.5;
         pose.neck.setValues(0, pose.hip.y - 25 + (squash * 0.5), lean);
 
-        // Arms relative to neck
         double armPull = sin(subT * pi) * 10;
         pose.lElbow = pose.neck + v.Vector3(-6, 7.5, -armPull);
         pose.rElbow = pose.neck + v.Vector3(6, 7.5, -armPull);
@@ -200,7 +198,6 @@ class StickmanGenerator {
         pose.rKnee = v.Vector3(5.0 + (3 * subT), kneeY, 0);
 
       } else if (t < 0.5) {
-        // LAUNCH
         pose.hip.y -= jumpY;
         pose.neck.setValues(0, pose.hip.y - 25, 0);
         pose.lElbow = pose.neck + v.Vector3(-6, 7.5, 5); pose.rElbow = pose.neck + v.Vector3(6, 7.5, 5);
@@ -209,7 +206,6 @@ class StickmanGenerator {
         pose.rKnee.y = pose.hip.y + 20; pose.rFoot.y = pose.hip.y + 35;
 
       } else if (t < 0.8) {
-        // FALL
         double subT = (t - 0.5) / 0.3;
         pose.hip.y -= jumpY;
         pose.neck.setValues(0, pose.hip.y - 25, 0);
@@ -222,7 +218,6 @@ class StickmanGenerator {
         pose.rKnee.y = pose.hip.y + 15; pose.rFoot.y = pose.hip.y + 30;
 
       } else {
-        // LANDING
         double subT = (t - 0.8) / 0.2;
         double absorb = sin(subT * pi) * 8;
         pose.hip.y += absorb;
@@ -239,7 +234,6 @@ class StickmanGenerator {
     return StickmanClip(name: "Jump", keyframes: frames, fps: 30, isLooping: false);
   }
 
-  // --- 4. CUSTOM (Accurate Clone) ---
   static StickmanClip generateEmpty(StickmanSkeleton? style) {
     List<StickmanKeyframe> frames = [];
     for(int i=0; i<30; i++) {
