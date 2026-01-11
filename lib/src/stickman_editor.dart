@@ -1,6 +1,10 @@
+import 'dart:io';
+import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:vector_math/vector_math_64.dart' as v;
+import 'package:path_provider/path_provider.dart';
+import 'package:share_plus/share_plus.dart';
 import 'stickman_skeleton.dart';
 import 'stickman_animator.dart';
 import 'stickman_painter.dart';
@@ -75,18 +79,35 @@ class _StickmanPoseEditorState extends State<StickmanPoseEditor> {
 
     // Inverse Logic depends on CameraView
     if (_cameraView == CameraView.free) {
-      // 3D Inverse
+      // 3D Inverse with Camera-Relative Dragging
       final rotMatrix = v.Matrix4.identity()
         ..rotateX(_rotationX)
         ..rotateY(_rotationY);
-      final invMatrix = v.Matrix4.inverted(rotMatrix);
 
       if (_axisMode == AxisMode.none) {
-        final delta3 = v.Vector3(screenDelta.dx, screenDelta.dy, 0);
-        final worldDelta = invMatrix.transform3(delta3);
-        node.position.x += worldDelta.x / scaleFactor;
-        node.position.y += worldDelta.y / scaleFactor;
-        node.position.z += worldDelta.z / scaleFactor;
+        // Camera-Relative Dragging logic
+        // We want dragging Right on screen (delta.dx > 0) to move the object to the Camera's Right.
+        // We want dragging Up on screen (delta.dy < 0) to move the object to the Camera's Up.
+
+        // Since we are rotating the world (or model) by `rotMatrix`, the Camera is effectively fixed.
+        // The inverse of `rotMatrix` transforms from Camera/Screen space back to World space.
+        // This allows us to map screen deltas directly to world movement aligned with the current view.
+
+        final invMatrix = v.Matrix4.inverted(rotMatrix);
+
+        // Map screen delta (X, Y) to a 3D vector in View Space (Z=0 plane)
+        // Screen Y is Down, so typically corresponds to Camera -Up (or World -Y in front view).
+        // Let's assume standard mapping: dx -> Right, dy -> Down.
+
+        final deltaView = v.Vector3(screenDelta.dx, screenDelta.dy, 0);
+
+        // Transform this delta back to World Space
+        final worldMove = invMatrix.transform3(deltaView);
+
+        // Scale appropriately
+        worldMove.scale(1.0 / scaleFactor);
+
+        node.position.add(worldMove);
       } else {
         _applyAxisConstrainedMove(node, screenDelta, scaleFactor, rotMatrix);
       }
@@ -232,151 +253,157 @@ class _StickmanPoseEditorState extends State<StickmanPoseEditor> {
               SafeArea(
                 child: Stack(
                   children: [
-                    // Group B: Camera Views (Top Left)
+                    // Left Column (Top Left)
                     Positioned(
                       top: 10,
                       left: 10,
-                      child: Container(
-                         padding: const EdgeInsets.all(4),
-                         decoration: BoxDecoration(
-                            color: Colors.black54,
-                            borderRadius: BorderRadius.circular(8),
-                         ),
-                         child: Column(
-                           children: [
-                             _viewButton("Free", CameraView.free),
-                             _viewButton("View X", CameraView.side),
-                             _viewButton("View Y", CameraView.top),
-                             _viewButton("View Z", CameraView.front),
-                           ],
-                         ),
+                      bottom: 100, // Leave space for bottom bar
+                      width: 80,
+                      child: Column(
+                         crossAxisAlignment: CrossAxisAlignment.start,
+                         children: [
+                           // Camera View Buttons
+                           Container(
+                             padding: const EdgeInsets.all(4),
+                             decoration: BoxDecoration(
+                                color: Colors.black54,
+                                borderRadius: BorderRadius.circular(8),
+                             ),
+                             child: Column(
+                               children: [
+                                 _viewButton("Free", CameraView.free),
+                                 _viewButton("View X", CameraView.side),
+                                 _viewButton("View Y", CameraView.top),
+                                 _viewButton("View Z", CameraView.front),
+                               ],
+                             ),
+                           ),
+                           const SizedBox(height: 20),
+                           // Camera Height Slider
+                           Expanded(
+                             child: Column(
+                               mainAxisSize: MainAxisSize.min,
+                               children: [
+                                 Text("Height", style: styleLabel),
+                                 SizedBox(
+                                   height: 150,
+                                   child: RotatedBox(
+                                     quarterTurns: 3,
+                                     child: Slider(
+                                       value: _cameraHeight,
+                                       min: -200,
+                                       max: 200,
+                                       onChanged: (v) => setState(() => _cameraHeight = v),
+                                     ),
+                                   ),
+                                 ),
+                                 const SizedBox(height: 20),
+                                 Text("Zoom", style: styleLabel),
+                                 SizedBox(
+                                   height: 150,
+                                   child: RotatedBox(
+                                     quarterTurns: 3,
+                                     child: Slider(
+                                       value: _zoom,
+                                       min: 0.5,
+                                       max: 10.0,
+                                       onChanged: (v) => setState(() => _zoom = v),
+                                     ),
+                                   ),
+                                 ),
+                               ],
+                             ),
+                           ),
+                         ],
                       ),
                     ),
 
-                    // Group A: Drag Constraints (Top Right)
+                    // Right Column (Top Right)
                     Positioned(
                       top: 10,
                       right: 10,
-                      child: Container(
-                         padding: const EdgeInsets.all(4),
-                         decoration: BoxDecoration(
-                            color: Colors.black54,
-                            borderRadius: BorderRadius.circular(8),
-                         ),
-                         child: Column(
-                           children: [
-                             _axisButton("Free", AxisMode.none),
-                             _axisButton("X", AxisMode.x, Colors.red),
-                             _axisButton("Y", AxisMode.y, Colors.green),
-                             _axisButton("Z", AxisMode.z, Colors.blue),
-                           ],
-                         ),
+                      bottom: 100,
+                      width: 80,
+                      child: Column(
+                         crossAxisAlignment: CrossAxisAlignment.end,
+                         children: [
+                           // Drag Axis Buttons
+                           Container(
+                             padding: const EdgeInsets.all(4),
+                             decoration: BoxDecoration(
+                                color: Colors.black54,
+                                borderRadius: BorderRadius.circular(8),
+                             ),
+                             child: Column(
+                               children: [
+                                 _axisButton("Free", AxisMode.none),
+                                 _axisButton("X", AxisMode.x, Colors.red),
+                                 _axisButton("Y", AxisMode.y, Colors.green),
+                                 _axisButton("Z", AxisMode.z, Colors.blue),
+                               ],
+                             ),
+                           ),
+                           const SizedBox(height: 20),
+                           // Head Slider
+                           Column(
+                             children: [
+                               Text("Head", style: styleLabel),
+                               SizedBox(
+                                 height: 150,
+                                 child: RotatedBox(
+                                   quarterTurns: 3,
+                                   child: Slider(
+                                     value: widget.controller.skeleton.headRadius,
+                                     min: 2.0,
+                                     max: 15.0,
+                                     onChanged: (v) => setState(() => widget.controller.skeleton.headRadius = v),
+                                   ),
+                                 ),
+                               ),
+                             ],
+                           ),
+                           const SizedBox(height: 20),
+                           // Line Slider
+                           Column(
+                             children: [
+                               Text("Line", style: styleLabel),
+                               SizedBox(
+                                 height: 150,
+                                 child: RotatedBox(
+                                   quarterTurns: 3,
+                                   child: Slider(
+                                     value: widget.controller.skeleton.strokeWidth,
+                                     min: 1.0,
+                                     max: 10.0,
+                                     onChanged: (v) => setState(() => widget.controller.skeleton.strokeWidth = v),
+                                   ),
+                                 ),
+                               ),
+                             ],
+                           ),
+                         ],
                       ),
                     ),
 
-                    // Group C: Camera Height (Left Edge Vertical Slider)
+                    // Bottom Center Toolbar
                     Positioned(
-                      left: 10,
-                      top: 200,
-                      bottom: 200, // Constrain height
+                      bottom: 20,
+                      left: 0,
+                      right: 0,
                       child: Center(
-                        child: RotatedBox(
-                          quarterTurns: 3,
-                          child: SizedBox(
-                            width: 200, // Fixed visual length
-                            child: Slider(
-                              value: _cameraHeight,
-                              min: -200,
-                              max: 200,
-                              onChanged: (v) => setState(() => _cameraHeight = v),
-                              label: "Height",
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            ElevatedButton(
+                              onPressed: _copyPoseToClipboard,
+                              child: const Text("Copy"),
                             ),
-                          ),
-                        ),
-                      ),
-                    ),
-
-                    // Line and Head sliders (Right Edge Vertical Sliders)
-                    Positioned(
-                      right: 10,
-                      top: 200,
-                      bottom: 200, // Constrain height
-                      child: Row(
-                        children: [
-                          Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              Text("line", style: styleLabel),
-                              SizedBox(height: 8),
-                              RotatedBox(
-                                quarterTurns: 3,
-                                child: SizedBox(
-                                  width: 200, // Fixed visual length
-                                  child: Slider(
-                                    value: widget.controller.skeleton.strokeWidth,
-                                    min: 1.0,
-                                    max: 10.0,
-                                    onChanged: (v) => setState(() => widget.controller.skeleton.strokeWidth = v),
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                          Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              Text("head", style: styleLabel),
-                              SizedBox(height: 8),
-                              RotatedBox(
-                                quarterTurns: 3,
-                                child: SizedBox(
-                                  width: 200, // Fixed visual length
-                                  child: Slider(
-                                    value: widget.controller.skeleton.headRadius,
-                                    min: 2.0,
-                                    max: 15.0,
-                                    onChanged: (v) => setState(() => widget.controller.skeleton.headRadius = v),
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ],
-                      ),
-                    ),
-
-                    // Node Operations (Bottom Right)
-                    Positioned(
-                      bottom: 20,
-                      right: 20,
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          ElevatedButton(
-                            onPressed: _copyPoseToClipboard,
-                            child: const Text("Copy"),
-                          ),
-                          const SizedBox(width: 8),
-                          ElevatedButton(
-                            onPressed: _exportObjToClipboard,
-                            child: const Text("OBJ"),
-                          ),
-                        ],
-                      ),
-                    ),
-
-                    // Zoom Slider (Bottom Left)
-                    Positioned(
-                      left: 50,
-                      bottom: 20,
-                      child: SizedBox(
-                        width: 200,
-                        child: Slider(
-                          value: _zoom,
-                          min: 0.5,
-                          max: 10.0,
-                          onChanged: (v) => setState(() => _zoom = v),
-                          label: "Zoom",
+                            const SizedBox(width: 16),
+                            ElevatedButton(
+                              onPressed: _saveObjToFile,
+                              child: const Text("OBJ"),
+                            ),
+                          ],
                         ),
                       ),
                     ),
@@ -455,11 +482,23 @@ class _StickmanPoseEditorState extends State<StickmanPoseEditor> {
     );
   }
 
-  void _exportObjToClipboard() {
+  Future<void> _saveObjToFile() async {
     final obj = StickmanExporter.generateObjString(widget.controller.skeleton);
-    Clipboard.setData(ClipboardData(text: obj));
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text("OBJ Geometry copied! Save as .obj for Blender.")),
-    );
+
+    // Save to temp file
+    final directory = await getTemporaryDirectory();
+    final file = File('${directory.path}/stickman.obj');
+    await file.writeAsString(obj);
+
+    // Share using share_plus
+    // This provides a native save/share dialog
+    await Share.shareXFiles([XFile(file.path)], text: 'Stickman 3D Model');
+
+    // Fallback/Confirm
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("OBJ File Ready to Save/Share")),
+      );
+    }
   }
 }

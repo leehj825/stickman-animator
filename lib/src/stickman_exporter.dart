@@ -123,31 +123,9 @@ class StickmanExporter {
         vertexOffset += addCube(node.position, skeleton.headRadius);
       } else {
         // Draw connections to children as bones
-        // BUT 'head' is a child of 'neck'. We treat the connection neck->head as a neck bone?
-        // Or do we just draw bones for every child connection?
-        // Usually stickman is drawn as lines between parent and child.
-        // Except for the head node itself which is a volume.
-
         for (var child in node.children) {
-          // If child is head, we still draw a line to it (the neck)?
-          // User said: "Limbs: Generate a 4-sided Cylinder or Box connecting each joint (e.g., Hip to Knee)."
-          // "Head: Generate a simple Cube at the neck position." -> Wait, "at the neck position"?
-          // Or "at the head node position"?
-          // Original request: "Head: Generate a simple Cube at the neck position."
-          // Checking memory/context: "The 'head' is explicitly implemented as a child 'StickmanNode' of the 'neck'..."
-          // So 'head' node has a position.
-          // If the cube is at 'neck', it conflicts with the neck node.
-          // Likely means "at the head's position" (which represents the head).
-          // Re-reading carefully: "Head: Generate a simple Cube at the neck position."
-          // This phrasing is ambiguous. "Head... at the neck position".
-          // In standard stickman, the head is a circle attached to the neck.
-          // I will assume it means "Generate a Cube for the Head node".
-
-          // Also check if we draw a bone to the head. Usually a neck line exists.
-          // If I draw a bone from Neck -> Head, that's the neck.
-
-          // Let's draw bones to all children.
-          // Note: If child is 'head', the bone (neck) goes to the center of the head.
+          // Connections to limbs (Neck->Elbow, Hip->Knee) are covered here
+          // because they are children in the skeleton hierarchy.
 
           vertexOffset += addBox(node.position, child.position, skeleton.strokeWidth);
           traverse(child);
