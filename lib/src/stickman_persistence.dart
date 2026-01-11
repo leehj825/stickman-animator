@@ -7,39 +7,41 @@ import 'stickman_animation.dart';
 
 class StickmanPersistence {
 
-  /// Saves the clip to a JSON file and prompts user to save/share it.
-  static Future<void> saveClip(StickmanClip clip) async {
+  /// Saves the ENTIRE PROJECT (List of clips) to a single JSON file.
+  static Future<void> saveProject(List<StickmanClip> clips) async {
     try {
-      final jsonString = jsonEncode(clip.toJson());
-      final safeName = clip.name.replaceAll(RegExp(r'[^\w\s]+'), '').trim().replaceAll(' ', '_');
+      final projectMap = {
+        'version': 1,
+        'clips': clips.map((c) => c.toJson()).toList(),
+      };
+
+      final jsonString = jsonEncode(projectMap);
+      final fileName = 'stickman_project_${DateTime.now().millisecondsSinceEpoch}.stickman_proj';
 
       if (Platform.isAndroid || Platform.isIOS) {
-        // Mobile: Use Share Sheet
         final directory = await getTemporaryDirectory();
-        final file = File('${directory.path}/$safeName.stickman');
+        final file = File('${directory.path}/$fileName');
         await file.writeAsString(jsonString);
-        await Share.shareXFiles([XFile(file.path)], text: 'Stickman Project');
+        await Share.shareXFiles([XFile(file.path)], text: 'Stickman Project (All Animations)');
       } else {
-        // Desktop: Use Save File Dialog
         String? outputFile = await FilePicker.platform.saveFile(
           dialogTitle: 'Save Project',
-          fileName: '$safeName.stickman',
+          fileName: fileName,
           type: FileType.any,
         );
-
         if (outputFile != null) {
           final file = File(outputFile);
           await file.writeAsString(jsonString);
         }
       }
     } catch (e) {
-      print('Error saving clip: $e');
+      print('Error saving project: $e');
       throw e;
     }
   }
 
-  /// Opens a file picker to load a .stickman or .json file.
-  static Future<StickmanClip?> loadClip() async {
+  /// Loads a project file and returns the List of clips.
+  static Future<List<StickmanClip>?> loadProject() async {
     try {
       FilePickerResult? result = await FilePicker.platform.pickFiles(
         type: FileType.any,
@@ -56,12 +58,21 @@ class StickmanPersistence {
         } else {
           return null;
         }
+
         Map<String, dynamic> jsonMap = jsonDecode(content);
-        return StickmanClip.fromJson(jsonMap);
+
+        if (jsonMap.containsKey('clips')) {
+          return (jsonMap['clips'] as List)
+              .map((c) => StickmanClip.fromJson(c))
+              .toList();
+        }
+        else if (jsonMap.containsKey('keyframes')) {
+          return [StickmanClip.fromJson(jsonMap)];
+        }
       }
       return null;
     } catch (e) {
-      print('Error loading clip: $e');
+      print('Error loading project: $e');
       return null;
     }
   }

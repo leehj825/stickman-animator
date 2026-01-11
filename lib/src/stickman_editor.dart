@@ -3,7 +3,6 @@ import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:vector_math/vector_math_64.dart' as v;
-import 'package:file_picker/file_picker.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 import 'stickman_skeleton.dart';
@@ -13,6 +12,7 @@ import 'stickman_exporter.dart';
 import 'stickman_animation.dart';
 import 'stickman_generator.dart';
 import 'stickman_persistence.dart';
+import 'package:file_picker/file_picker.dart';
 
 class StickmanPoseEditor extends StatefulWidget {
   final StickmanController controller;
@@ -26,8 +26,8 @@ class StickmanPoseEditor extends StatefulWidget {
 class _StickmanPoseEditorState extends State<StickmanPoseEditor> {
   late Map<String, StickmanNode> _nodes;
 
-  // --- NEW: Animation Cache (Preserves edits) ---
-  final Map<String, StickmanClip> _clipCache = {};
+  // --- PROJECT STATE ---
+  List<StickmanClip> _projectClips = [];
 
   // View Parameters
   CameraView _cameraView = CameraView.free;
@@ -45,15 +45,65 @@ class _StickmanPoseEditorState extends State<StickmanPoseEditor> {
     super.initState();
     _refreshNodeCache();
     widget.controller.setStrategy(ManualMotionStrategy());
+    // We do NOT generate defaults here anymore.
+    // We wait until the first mode switch or we just initialize empty.
+    // If we init here, they won't have the user's custom pose if they edit it later.
+    // But to show something on first load, we can init defaults.
+    _regenerateDefaultClips();
+  }
+
+  // --- FIX: REGENERATE DEFAULTS ---
+  // This ensures that "Run", "Jump", "Kick" always use the user's current
+  // limb lengths (Pose) when they enter Animate mode.
+  void _regenerateDefaultClips() {
+    final style = widget.controller.skeleton;
+
+    void updateClip(String name, StickmanClip Function() gen) {
+      final index = _projectClips.indexWhere((c) => c.name == name);
+      final newClip = gen();
+      if (index != -1) {
+        _projectClips[index] = newClip;
+      } else {
+        _projectClips.add(newClip);
+      }
+    }
+
+    updateClip("Run", () => StickmanGenerator.generateRun(style));
+    updateClip("Jump", () => StickmanGenerator.generateJump(style));
+    updateClip("Kick", () => StickmanGenerator.generateKick(style));
   }
 
   void _switchMode(EditorMode mode) {
+    if (mode == EditorMode.animate) {
+      // FIX: FORCE REGENERATE DEFAULTS from current Pose
+      // This applies the limb length/position changes to the animation.
+      _regenerateDefaultClips();
+
+      // Also Sync style (Head radius/stroke)
+      _syncProjectStyles();
+
+      if (widget.controller.activeClip == null && _projectClips.isNotEmpty) {
+        _activateClip(_projectClips.first);
+      }
+    }
     setState(() {
       widget.controller.setMode(mode);
     });
   }
 
-  void _loadClip(StickmanClip clip) {
+  // Sync style settings (Line/Head) to the animation frames
+  void _syncProjectStyles() {
+    final currentStyle = widget.controller.skeleton;
+    for (var clip in _projectClips) {
+      for (var frame in clip.keyframes) {
+        frame.pose.headRadius = currentStyle.headRadius;
+        frame.pose.strokeWidth = currentStyle.strokeWidth;
+      }
+    }
+  }
+
+  void _activateClip(StickmanClip clip) {
+    _syncProjectStyles(); // Ensure this clip is fresh style-wise
     setState(() {
       widget.controller.activeClip = clip;
       widget.controller.currentFrameIndex = 0.0;
@@ -61,14 +111,44 @@ class _StickmanPoseEditorState extends State<StickmanPoseEditor> {
     });
   }
 
-  // --- NEW: Load or Generate Logic ---
-  /// Checks if the clip exists in cache. If so, loads it (with edits).
-  /// If not, generates it, saves to cache, then loads it.
-  void _loadOrGenerateClip(String key, StickmanClip Function() generator) {
-    if (!_clipCache.containsKey(key)) {
-      _clipCache[key] = generator();
-    }
-    _loadClip(_clipCache[key]!);
+  void _promptAddAnimation() {
+    final textController = TextEditingController(text: "New Animation");
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text("Create Animation"),
+        content: TextField(
+          controller: textController,
+          decoration: InputDecoration(hintText: "Enter Name"),
+          autofocus: true,
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: Text("Cancel")),
+          ElevatedButton(
+            onPressed: () {
+              final name = textController.text.trim();
+              if (name.isNotEmpty) {
+                // Generate using CURRENT RIG
+                final newClip = StickmanGenerator.generateEmpty(widget.controller.skeleton);
+                final finalClip = StickmanClip(
+                  name: name,
+                  keyframes: newClip.keyframes,
+                  fps: 30,
+                  isLooping: true
+                );
+
+                setState(() {
+                  _projectClips.add(finalClip);
+                });
+                _activateClip(finalClip);
+                Navigator.pop(context);
+              }
+            },
+            child: Text("Create"),
+          ),
+        ],
+      ),
+    );
   }
 
   void _togglePlayback() {
@@ -102,19 +182,15 @@ class _StickmanPoseEditorState extends State<StickmanPoseEditor> {
 
   void _updateBonePosition(String nodeId, Offset screenDelta) {
     if (!_nodes.containsKey(nodeId)) return;
-
     final node = _nodes[nodeId]!;
     widget.controller.lastModifiedBone = node.id;
 
     final modelScale = widget.controller.scale;
     if (modelScale == 0) return;
-
     final scaleFactor = modelScale * _zoom;
 
     void applyMove(v.Vector3 delta) {
       node.position.add(delta);
-
-      // CRITICAL: Automatically save the change to the active clip
       if (widget.controller.mode == EditorMode.animate) {
         widget.controller.saveCurrentPoseToFrame();
       }
@@ -223,7 +299,6 @@ class _StickmanPoseEditorState extends State<StickmanPoseEditor> {
                 ),
               ),
 
-              // Handles
               ..._nodes.values.map((node) {
                 final screenPos = _toScreen(node.position, size);
                 final isSelected = node.id == _selectedNodeId;
@@ -250,7 +325,6 @@ class _StickmanPoseEditorState extends State<StickmanPoseEditor> {
               SafeArea(
                 child: Stack(
                   children: [
-                    // Top Bar
                     Positioned(
                       top: 10, left: 0, right: 0,
                       child: Center(
@@ -275,7 +349,6 @@ class _StickmanPoseEditorState extends State<StickmanPoseEditor> {
                       ),
                     ),
 
-                    // Left Column (Scrollable to prevent overflow)
                     Positioned(
                       top: 60, left: 10, bottom: 120, width: 80,
                       child: SingleChildScrollView(
@@ -323,7 +396,6 @@ class _StickmanPoseEditorState extends State<StickmanPoseEditor> {
                       ),
                     ),
 
-                    // Right Column (Scrollable)
                     Positioned(
                       top: 60, right: 10, bottom: 120, width: 80,
                       child: SingleChildScrollView(
@@ -371,7 +443,6 @@ class _StickmanPoseEditorState extends State<StickmanPoseEditor> {
                       ),
                     ),
 
-                    // Bottom: Animation/Export
                     Positioned(
                       bottom: 10, left: 0, right: 0,
                       child: Column(
@@ -391,10 +462,8 @@ class _StickmanPoseEditorState extends State<StickmanPoseEditor> {
                                         label: Text("Save Project"),
                                         style: ElevatedButton.styleFrom(backgroundColor: Colors.teal),
                                         onPressed: () async {
-                                          if (widget.controller.activeClip != null) {
-                                            await StickmanPersistence.saveClip(widget.controller.activeClip!);
-                                            if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Project saved!")));
-                                          }
+                                          await StickmanPersistence.saveProject(_projectClips);
+                                          if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("All Animations Saved!")));
                                         },
                                       ),
                                       const SizedBox(width: 10),
@@ -403,8 +472,14 @@ class _StickmanPoseEditorState extends State<StickmanPoseEditor> {
                                         label: Text("Load Project"),
                                         style: ElevatedButton.styleFrom(backgroundColor: Colors.orange),
                                         onPressed: () async {
-                                          final clip = await StickmanPersistence.loadClip();
-                                          if (clip != null) _loadClip(clip);
+                                          final clips = await StickmanPersistence.loadProject();
+                                          if (clips != null && clips.isNotEmpty) {
+                                            setState(() {
+                                              _projectClips = clips;
+                                            });
+                                            _activateClip(_projectClips.first);
+                                            if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Project Loaded!")));
+                                          }
                                         },
                                       ),
                                     ],
@@ -415,28 +490,35 @@ class _StickmanPoseEditorState extends State<StickmanPoseEditor> {
                                     child: Row(
                                       mainAxisAlignment: MainAxisAlignment.center,
                                       children: [
-                                        // UPDATED: Use _loadOrGenerateClip to check cache first!
-                                        _clipButton("Run", () => _loadOrGenerateClip("Run", () => StickmanGenerator.generateRun(widget.controller.skeleton))),
-                                        _clipButton("Jump", () => _loadOrGenerateClip("Jump", () => StickmanGenerator.generateJump(widget.controller.skeleton))),
-                                        _clipButton("Kick", () => _loadOrGenerateClip("Kick", () => StickmanGenerator.generateKick(widget.controller.skeleton))),
-                                        _clipButton("+", () {
-                                          _loadClip(StickmanGenerator.generateEmpty(widget.controller.skeleton));
-                                          if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("New Animation Created")));
-                                        }),
+                                        ..._projectClips.map((clip) => _clipButton(clip.name, () => _activateClip(clip))),
+                                        Padding(
+                                          padding: const EdgeInsets.symmetric(horizontal: 4),
+                                          child: IconButton(
+                                            icon: Icon(Icons.add_circle, color: Colors.greenAccent),
+                                            onPressed: _promptAddAnimation,
+                                            tooltip: "Create New Animation",
+                                          ),
+                                        ),
                                       ],
                                     ),
                                   ),
                                   Row(
                                     children: [
                                       IconButton(
-                                        icon: Icon(widget.controller.isPlaying ? Icons.pause : Icons.play_arrow, color: Colors.white),
+                                        icon: Icon(
+                                          widget.controller.isPlaying ? Icons.pause : Icons.play_arrow,
+                                          color: Colors.white, size: 28
+                                        ),
                                         onPressed: _togglePlayback,
                                       ),
                                       if (widget.controller.lastModifiedBone != null)
-                                        IconButton(
-                                          icon: Icon(Icons.copy_all, color: Colors.amber),
+                                        TextButton(
                                           onPressed: _applyBoneToAll,
-                                          tooltip: "Apply Pose",
+                                          style: TextButton.styleFrom(
+                                            foregroundColor: Colors.amber,
+                                            padding: EdgeInsets.symmetric(horizontal: 8),
+                                          ),
+                                          child: Text("All", style: TextStyle(fontWeight: FontWeight.bold)),
                                         ),
                                       Expanded(
                                         child: Slider(
@@ -464,6 +546,17 @@ class _StickmanPoseEditorState extends State<StickmanPoseEditor> {
                               ElevatedButton(onPressed: _copyPoseToClipboard, child: const Text("Copy")),
                               const SizedBox(width: 16),
                               ElevatedButton(onPressed: _saveObjToFile, child: const Text("OBJ")),
+                              if (widget.controller.mode == EditorMode.pose) ...[
+                                const SizedBox(width: 16),
+                                ElevatedButton(
+                                  onPressed: () {
+                                    _regenerateDefaultClips();
+                                    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Default Animations Regenerated!")));
+                                  },
+                                  style: ElevatedButton.styleFrom(backgroundColor: Colors.deepOrange),
+                                  child: const Text("Regen"),
+                                ),
+                              ],
                               if (widget.controller.mode == EditorMode.animate && widget.controller.activeClip != null) ...[
                                 const SizedBox(width: 16),
                                 ElevatedButton(
@@ -486,6 +579,8 @@ class _StickmanPoseEditorState extends State<StickmanPoseEditor> {
       },
     );
   }
+
+  // --- RESTORED HELPER METHODS ---
 
   Widget _viewButton(String label, CameraView view) {
     bool selected = _cameraView == view;
@@ -547,23 +642,16 @@ class _StickmanPoseEditorState extends State<StickmanPoseEditor> {
 
   Future<void> _saveObjToFile() async {
     final obj = StickmanExporter.generateObjString(widget.controller.skeleton);
-
     if (Platform.isAndroid || Platform.isIOS) {
       final directory = await getTemporaryDirectory();
       final file = File('${directory.path}/stickman.obj');
       await file.writeAsString(obj);
       await Share.shareXFiles([XFile(file.path)], text: 'Stickman 3D Model');
     } else {
-      String? outputFile = await FilePicker.platform.saveFile(
-        dialogTitle: 'Save OBJ File',
-        fileName: 'stickman.obj',
-        type: FileType.any,
-      );
-
+      String? outputFile = await FilePicker.platform.saveFile(dialogTitle: 'Save OBJ', fileName: 'stickman.obj', type: FileType.any);
       if (outputFile != null) {
-        final file = File(outputFile);
-        await file.writeAsString(obj);
-        if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("OBJ file saved!")));
+        await File(outputFile).writeAsString(obj);
+        if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("OBJ Saved!")));
       }
     }
   }
@@ -576,23 +664,16 @@ class _StickmanPoseEditorState extends State<StickmanPoseEditor> {
   Future<void> _exportZip() async {
     if (widget.controller.activeClip == null) return;
     final bytes = await StickmanExporter.exportClipToZip(widget.controller.activeClip!);
-
     if (Platform.isAndroid || Platform.isIOS) {
       final directory = await getTemporaryDirectory();
       final file = File('${directory.path}/animation.zip');
       await file.writeAsBytes(bytes);
       await Share.shareXFiles([XFile(file.path)], text: 'Stickman Animation ZIP');
     } else {
-      String? outputFile = await FilePicker.platform.saveFile(
-        dialogTitle: 'Save Animation ZIP',
-        fileName: 'animation.zip',
-        type: FileType.any,
-      );
-
+      String? outputFile = await FilePicker.platform.saveFile(dialogTitle: 'Save ZIP', fileName: 'animation.zip', type: FileType.any);
       if (outputFile != null) {
-        final file = File(outputFile);
-        await file.writeAsBytes(bytes);
-        if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("ZIP file saved!")));
+        await File(outputFile).writeAsBytes(bytes);
+        if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("ZIP Saved!")));
       }
     }
   }
