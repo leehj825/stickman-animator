@@ -546,6 +546,17 @@ class _StickmanPoseEditorState extends State<StickmanPoseEditor> {
                               ElevatedButton(onPressed: _copyPoseToClipboard, child: const Text("Copy")),
                               const SizedBox(width: 16),
                               ElevatedButton(onPressed: _saveObjToFile, child: const Text("OBJ")),
+                              if (widget.controller.mode == EditorMode.pose) ...[
+                                const SizedBox(width: 16),
+                                ElevatedButton(
+                                  onPressed: () {
+                                    _regenerateDefaultClips();
+                                    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Default Animations Regenerated!")));
+                                  },
+                                  style: ElevatedButton.styleFrom(backgroundColor: Colors.deepOrange),
+                                  child: const Text("Regen"),
+                                ),
+                              ],
                               if (widget.controller.mode == EditorMode.animate && widget.controller.activeClip != null) ...[
                                 const SizedBox(width: 16),
                                 ElevatedButton(
