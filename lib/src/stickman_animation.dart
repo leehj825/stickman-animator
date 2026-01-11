@@ -13,11 +13,13 @@ class StickmanClip {
   final String name;
   final List<StickmanKeyframe> keyframes;
   final double fps;
+  final bool isLooping;
 
   StickmanClip({
     required this.name,
     required this.keyframes,
     this.fps = 30.0,
+    this.isLooping = true,
   });
 
   /// Creates a clip with [length] frames, all initialized to the default pose.
