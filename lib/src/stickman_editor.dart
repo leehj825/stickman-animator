@@ -25,7 +25,7 @@ class StickmanPoseEditor extends StatefulWidget {
 class _StickmanPoseEditorState extends State<StickmanPoseEditor> {
   late Map<String, StickmanNode> _nodes;
 
-  // Animation Cache (Preserves edits)
+  // --- NEW: Animation Cache (Preserves edits) ---
   final Map<String, StickmanClip> _clipCache = {};
 
   // View Parameters
@@ -60,7 +60,9 @@ class _StickmanPoseEditorState extends State<StickmanPoseEditor> {
     });
   }
 
-  /// Loads a clip from cache or generates it if missing.
+  // --- NEW: Load or Generate Logic ---
+  /// Checks if the clip exists in cache. If so, loads it (with edits).
+  /// If not, generates it, saves to cache, then loads it.
   void _loadOrGenerateClip(String key, StickmanClip Function() generator) {
     if (!_clipCache.containsKey(key)) {
       _clipCache[key] = generator();
@@ -110,6 +112,8 @@ class _StickmanPoseEditorState extends State<StickmanPoseEditor> {
 
     void applyMove(v.Vector3 delta) {
       node.position.add(delta);
+
+      // CRITICAL: Automatically save the change to the active clip
       if (widget.controller.mode == EditorMode.animate) {
         widget.controller.saveCurrentPoseToFrame();
       }
@@ -270,7 +274,7 @@ class _StickmanPoseEditorState extends State<StickmanPoseEditor> {
                       ),
                     ),
 
-                    // Left Column (Wrapped in ScrollView)
+                    // Left Column (Scrollable to prevent overflow)
                     Positioned(
                       top: 60, left: 10, bottom: 120, width: 80,
                       child: SingleChildScrollView(
@@ -318,7 +322,7 @@ class _StickmanPoseEditorState extends State<StickmanPoseEditor> {
                       ),
                     ),
 
-                    // Right Column (Wrapped in ScrollView)
+                    // Right Column (Scrollable)
                     Positioned(
                       top: 60, right: 10, bottom: 120, width: 80,
                       child: SingleChildScrollView(
@@ -410,6 +414,7 @@ class _StickmanPoseEditorState extends State<StickmanPoseEditor> {
                                     child: Row(
                                       mainAxisAlignment: MainAxisAlignment.center,
                                       children: [
+                                        // UPDATED: Use _loadOrGenerateClip to check cache first!
                                         _clipButton("Run", () => _loadOrGenerateClip("Run", () => StickmanGenerator.generateRun(widget.controller.skeleton))),
                                         _clipButton("Jump", () => _loadOrGenerateClip("Jump", () => StickmanGenerator.generateJump(widget.controller.skeleton))),
                                         _clipButton("Kick", () => _loadOrGenerateClip("Kick", () => StickmanGenerator.generateKick(widget.controller.skeleton))),
@@ -434,7 +439,6 @@ class _StickmanPoseEditorState extends State<StickmanPoseEditor> {
                                         ),
                                       Expanded(
                                         child: Slider(
-                                          // SAFETY FIX: Clamp to prevent crash
                                           value: widget.controller.currentFrameIndex.clamp(0.0, (widget.controller.activeClip?.frameCount.toDouble() ?? 1) - 0.01),
                                           min: 0,
                                           max: (widget.controller.activeClip?.frameCount.toDouble() ?? 1) - 0.01,
@@ -516,7 +520,6 @@ class _StickmanPoseEditorState extends State<StickmanPoseEditor> {
 
   Widget _clipButton(String label, VoidCallback onTap) {
     bool isActive = widget.controller.activeClip?.name == label;
-    // Check if cached to maybe indicate state, but just active check is fine
     return Padding(
       padding: EdgeInsets.symmetric(horizontal: 4),
       child: ElevatedButton(
