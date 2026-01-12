@@ -112,7 +112,7 @@ class StickmanPainter extends CustomPainter {
 
     final fillPaint = Paint()..color = color ..style = PaintingStyle.fill;
 
-    // Draw Grid
+    // Draw Grid (Always drawn for display, not part of saved data)
     _drawGrid(canvas, size);
 
     // 3D Projection Helper instance
