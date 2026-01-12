@@ -21,6 +21,25 @@
 
 - Default saved file name: `stickman_project_<timestamp>.sap` (created by the editor when choosing "Save Project").
 
----
+## Integration with your Game/App
 
-If you'd like, I can also add a short example snippet showing how to include a `.sap` file in another Flutter app and programmatically load it. 💡
+`StickmanPersistence` is designed for user-picked files (using file pickers), but games typically load assets directly from the bundle.
+
+Use this helper function to load `.sap` files from your assets:
+
+```dart
+import 'dart:convert';
+import 'package:flutter/services.dart';
+import 'package:stickman_3d/stickman_3d.dart';
+
+Future<List<StickmanClip>> loadStickmanAssets(String assetPath) async {
+  final jsonString = await rootBundle.loadString(assetPath);
+  final jsonMap = jsonDecode(jsonString);
+
+  if (jsonMap is Map<String, dynamic> && jsonMap.containsKey('clips')) {
+    return (jsonMap['clips'] as List).map((c) => StickmanClip.fromJson(c)).toList();
+  } else {
+    return [StickmanClip.fromJson(jsonMap)];
+  }
+}
+```

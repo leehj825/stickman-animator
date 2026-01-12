@@ -462,7 +462,11 @@ class _StickmanPoseEditorState extends State<StickmanPoseEditor> {
                                         label: Text("Save Project"),
                                         style: ElevatedButton.styleFrom(backgroundColor: Colors.teal),
                                         onPressed: () async {
-                                          await StickmanPersistence.saveProject(_projectClips);
+                                          await StickmanPersistence.saveProject(
+                                            _projectClips,
+                                            widget.controller.skeleton.headRadius,
+                                            widget.controller.skeleton.strokeWidth
+                                          );
                                           if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("All Animations Saved!")));
                                         },
                                       ),
@@ -472,10 +476,12 @@ class _StickmanPoseEditorState extends State<StickmanPoseEditor> {
                                         label: Text("Load Project"),
                                         style: ElevatedButton.styleFrom(backgroundColor: Colors.orange),
                                         onPressed: () async {
-                                          final clips = await StickmanPersistence.loadProject();
-                                          if (clips != null && clips.isNotEmpty) {
+                                          final projectData = await StickmanPersistence.loadProject();
+                                          if (projectData != null && projectData.clips.isNotEmpty) {
                                             setState(() {
-                                              _projectClips = clips;
+                                              _projectClips = projectData.clips;
+                                              widget.controller.skeleton.headRadius = projectData.headRadius;
+                                              widget.controller.skeleton.strokeWidth = projectData.strokeWidth;
                                             });
                                             _activateClip(_projectClips.first);
                                             if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Project Loaded!")));
@@ -543,8 +549,6 @@ class _StickmanPoseEditorState extends State<StickmanPoseEditor> {
                           Row(
                             mainAxisSize: MainAxisSize.min,
                             children: [
-                              ElevatedButton(onPressed: _copyPoseToClipboard, child: const Text("Copy")),
-                              const SizedBox(width: 16),
                               ElevatedButton(onPressed: _saveObjToFile, child: const Text("OBJ")),
                               if (widget.controller.mode == EditorMode.pose) ...[
                                 const SizedBox(width: 16),
@@ -628,16 +632,6 @@ class _StickmanPoseEditorState extends State<StickmanPoseEditor> {
         child: Text(label, style: TextStyle(fontSize: 12)),
       ),
     );
-  }
-
-  void _copyPoseToClipboard() {
-    final skel = widget.controller.skeleton;
-    final buffer = StringBuffer();
-    String format(v.Vector3 v) => "${v.x.toStringAsFixed(1)}, ${v.y.toStringAsFixed(1)}, ${v.z.toStringAsFixed(1)}";
-    buffer.writeln("// Pose Data...");
-    buffer.writeln(skel.toJson().toString());
-    Clipboard.setData(ClipboardData(text: buffer.toString()));
-    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Dart Code copied!")));
   }
 
   Future<void> _saveObjToFile() async {

@@ -1,0 +1,18 @@
+name: stickman_example
+description: Demonstrates how to use stickman_3d in a game.
+publish_to: 'none'
+version: 1.0.0
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  stickman_3d:
+    path: ../
+
+flutter:
+  uses-material-design: true
+  assets:
+    # Ensure you have a sample file here, or users know to add one
+    - assets/stickman.sap
