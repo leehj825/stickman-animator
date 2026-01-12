@@ -5,13 +5,27 @@ import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 import 'stickman_animation.dart';
 
+class StickmanProjectData {
+  final List<StickmanClip> clips;
+  final double headRadius;
+  final double strokeWidth;
+
+  StickmanProjectData({
+    required this.clips,
+    required this.headRadius,
+    required this.strokeWidth,
+  });
+}
+
 class StickmanPersistence {
 
-  /// Saves the ENTIRE PROJECT (List of clips) to a single JSON file (extension: .sap).
-  static Future<void> saveProject(List<StickmanClip> clips) async {
+  /// Saves the ENTIRE PROJECT (List of clips + Global Style) to a single JSON file (extension: .sap).
+  static Future<void> saveProject(List<StickmanClip> clips, double headRadius, double strokeWidth) async {
     try {
       final projectMap = {
         'version': 1,
+        'headRadius': headRadius,
+        'strokeWidth': strokeWidth,
         'clips': clips.map((c) => c.toJson()).toList(),
       };
 
@@ -40,8 +54,8 @@ class StickmanPersistence {
     }
   }
 
-  /// Loads a project file and returns the List of clips.
-  static Future<List<StickmanClip>?> loadProject() async {
+  /// Loads a project file and returns the Project Data.
+  static Future<StickmanProjectData?> loadProject() async {
     try {
       FilePickerResult? result = await FilePicker.platform.pickFiles(
         type: FileType.any,
@@ -60,15 +74,27 @@ class StickmanPersistence {
         }
 
         Map<String, dynamic> jsonMap = jsonDecode(content);
+        List<StickmanClip> clips = [];
 
         if (jsonMap.containsKey('clips')) {
-          return (jsonMap['clips'] as List)
+           clips = (jsonMap['clips'] as List)
               .map((c) => StickmanClip.fromJson(c))
               .toList();
         }
         else if (jsonMap.containsKey('keyframes')) {
-          return [StickmanClip.fromJson(jsonMap)];
+          // Legacy single-clip file support
+           clips = [StickmanClip.fromJson(jsonMap)];
         }
+
+        // Load style if present, otherwise default to standard values
+        double headRadius = (jsonMap['headRadius'] as num?)?.toDouble() ?? 6.0;
+        double strokeWidth = (jsonMap['strokeWidth'] as num?)?.toDouble() ?? 4.6;
+
+        return StickmanProjectData(
+          clips: clips,
+          headRadius: headRadius,
+          strokeWidth: strokeWidth
+        );
       }
       return null;
     } catch (e) {
