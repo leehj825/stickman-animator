@@ -386,34 +386,32 @@ class _StickmanPoseEditorState extends State<StickmanPoseEditor> {
     double alpha = acos(cosAlpha);
 
     // 3. Determine Rotation Axis (Bend Normal)
-    // FIX: To prevent flipping, we preferentially use the CURRENT BEND PLANE if it exists.
-    // Only if the limb is straight do we fall back to the "Standard Anatomical" pole vector.
-
     v.Vector3 armAxis = direction.normalized();
-    v.Vector3 currentLimbVector = jointNode.position - rootPos;
+    v.Vector3 bendNormal = v.Vector3.zero();
 
-    // Attempt to use current bend
-    v.Vector3 bendNormal = armAxis.cross(currentLimbVector);
+    // STRICT CONSTRAINTS (Revived)
+    v.Vector3? pole;
+    // Check ID to determine pole
+    if (jointNode.id.contains('Knee')) {
+       pole = v.Vector3(0, 0, 1); // Knee Forward (+Z)
+    } else if (jointNode.id.contains('Elbow')) {
+       pole = v.Vector3(0, 0, -1); // Elbow Backward (-Z)
+    }
 
-    // Threshold for "Straight"
-    if (bendNormal.length < 0.01) {
-       // Limb is straight, use Anatomical Preference
-       v.Vector3? pole;
-       if (jointNode.id.contains('Knee')) pole = v.Vector3(0, 0, 1); // Knee Forward
-       else if (jointNode.id.contains('Elbow')) pole = v.Vector3(0, 0, -1); // Elbow Back
-
-       if (pole != null) {
-         bendNormal = armAxis.cross(pole);
-         // Double check if pole is collinear with armAxis
-         if (bendNormal.length < 0.001) {
-            bendNormal = armAxis.cross(v.Vector3(1, 0, 0)); // Arbitrary X
-         }
-       } else {
-         bendNormal = armAxis.cross(v.Vector3(1, 0, 0));
+    if (pole != null) {
+       bendNormal = armAxis.cross(pole);
+       // Handle collinear case
+       if (bendNormal.length < 0.001) {
+          bendNormal = armAxis.cross(v.Vector3(1, 0, 0));
        }
+    } else {
+       // Fallback for non-constrained limbs: Use current state
+       v.Vector3 currentLimbVector = jointNode.position - rootPos;
+       bendNormal = armAxis.cross(currentLimbVector);
     }
 
     bendNormal.normalize();
+    if (bendNormal.length == 0) bendNormal = v.Vector3(1, 0, 0); // Safety
 
     // 4. Calculate New Joint
     v.Quaternion q = v.Quaternion.axisAngle(bendNormal, alpha);
