@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "headRadius": 6.0,
+  "strokeWidth": 4.6,
+  "clips": [
+    {
+      "name": "Run",
+      "fps": 30,
+      "isLooping": true,
+      "keyframes": []
+    }
+  ]
+}
