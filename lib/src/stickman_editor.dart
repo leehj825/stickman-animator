@@ -205,26 +205,20 @@ class _StickmanPoseEditorState extends State<StickmanPoseEditor> {
   void _onNodeSelected(String nodeId) {
     setState(() {
       _selectedNodeId = nodeId;
-      // Calculate current rotation for the slider
       _currentRotationValue = _calculateCurrentSwivel(nodeId);
     });
   }
 
   // --- ROTATION LOGIC ---
-
-  // Calculates the current rotation angle (0 to 2PI) for the slider
   double _calculateCurrentSwivel(String nodeId) {
     if (!_nodes.containsKey(nodeId)) return 0.0;
     final skel = widget.controller.skeleton;
 
     if (nodeId == 'head') {
-      // Head Rotation: Yaw relative to Neck (X-Z plane)
-      // Relative vector
       v.Vector3 rel = skel.head! - skel.neck;
-      return atan2(rel.x, rel.z); // Using Z as forward (0)
+      return atan2(rel.x, rel.z);
     }
 
-    // Limbs: Hand or Foot
     String midId = '';
     String rootId = '';
     if (nodeId == 'lHand') { midId = 'lElbow'; rootId = 'neck'; }
@@ -233,7 +227,6 @@ class _StickmanPoseEditorState extends State<StickmanPoseEditor> {
     else if (nodeId == 'rFoot') { midId = 'rKnee'; rootId = 'hip'; }
     else return 0.0;
 
-    // Calculate Swivel Angle
     v.Vector3 root = skel.getBone(rootId)!;
     v.Vector3 mid = skel.getBone(midId)!;
     v.Vector3 eff = skel.getBone(nodeId)!;
@@ -241,24 +234,12 @@ class _StickmanPoseEditorState extends State<StickmanPoseEditor> {
     v.Vector3 axis = (eff - root).normalized();
     if (axis.length == 0) return 0.0;
 
-    // Vector from root to mid
     v.Vector3 limbVec = mid - root;
-
-    // Project mid onto the plane perpendicular to axis
-    // plane_point = point - axis * (point . axis)
     v.Vector3 projMid = limbVec - (axis * limbVec.dot(axis));
-
-    // Define a reference vector on this plane to measure angle against
-    // Let's use world Up (0,1,0) projected onto plane as reference,
-    // or Right (1,0,0) if axis is vertical.
     v.Vector3 worldUp = v.Vector3(0, 1, 0);
     if (axis.dot(worldUp).abs() > 0.9) worldUp = v.Vector3(1, 0, 0);
-
-    v.Vector3 ref = worldUp - (axis * worldUp.dot(axis));
-    ref.normalize();
-
-    // Orthogonal vector for atan2
-    v.Vector3 ortho = axis.cross(ref);
+    v.Vector3 ref = (worldUp - (axis * worldUp.dot(axis))).normalized();
+    v.Vector3 ortho = axis.cross(ref).normalized();
 
     double x = projMid.dot(ref);
     double y = projMid.dot(ortho);
@@ -266,28 +247,17 @@ class _StickmanPoseEditorState extends State<StickmanPoseEditor> {
     return atan2(y, x);
   }
 
-  // Applies the rotation from the slider
   void _applyRotation(String nodeId, double angle) {
      final skel = widget.controller.skeleton;
      widget.controller.lastModifiedBone = nodeId;
 
      if (nodeId == 'head') {
-       // Orbit Head around Neck
-       // Keep distance, change angle
        double dist = skel.neck.distanceTo(skel.head!);
-       // New position based on angle (Yaw)
-       // x = sin(angle), z = cos(angle) for typical 0=Forward
        double x = sin(angle) * dist;
        double z = cos(angle) * dist;
-       // Keep Y relative constant or just use X/Z plane orbit?
-       // Stickman head is usually directly above or slightly forward.
-       // Let's preserve current Y offset
        double yOffset = skel.head!.y - skel.neck.y;
-
        skel.head!.setFrom(skel.neck + v.Vector3(x, yOffset, z));
-
      } else {
-       // Limb Swivel
        String midId = '';
        String rootId = '';
        if (nodeId == 'lHand') { midId = 'lElbow'; rootId = 'neck'; }
@@ -300,28 +270,20 @@ class _StickmanPoseEditorState extends State<StickmanPoseEditor> {
        v.Vector3 mid = skel.getBone(midId)!;
        v.Vector3 eff = skel.getBone(nodeId)!;
 
-       // We rotate 'mid' around the axis 'root->eff'
        v.Vector3 axis = (eff - root).normalized();
        if (axis.length < 0.001) return;
 
-       // Find center of rotation (projection of mid onto axis)
        v.Vector3 limbVec = mid - root;
        v.Vector3 center = root + (axis * limbVec.dot(axis));
-
-       // Radius vector (center -> mid)
        v.Vector3 radiusVec = mid - center;
        double radiusLen = radiusVec.length;
 
-       // Construct coordinate frame
        v.Vector3 worldUp = v.Vector3(0, 1, 0);
        if (axis.dot(worldUp).abs() > 0.9) worldUp = v.Vector3(1, 0, 0);
        v.Vector3 ref = (worldUp - (axis * worldUp.dot(axis))).normalized();
        v.Vector3 ortho = axis.cross(ref).normalized();
 
-       // Calculate new position using angle
-       // pos = center + ref * cos(a)*r + ortho * sin(a)*r
        v.Vector3 newMid = center + (ref * cos(angle) * radiusLen) + (ortho * sin(angle) * radiusLen);
-
        skel.setBone(midId, newMid);
      }
 
@@ -359,9 +321,12 @@ class _StickmanPoseEditorState extends State<StickmanPoseEditor> {
       else if (_cameraView == CameraView.top) worldDelta.setValues(dx, 0, dy);
     }
 
+    if (_axisMode == AxisMode.x) worldDelta.setValues(worldDelta.x, 0, 0);
+    else if (_axisMode == AxisMode.y) worldDelta.setValues(0, worldDelta.y, 0);
+    else if (_axisMode == AxisMode.z) worldDelta.setValues(0, 0, worldDelta.z);
+
     _applySmartMove(nodeId, worldDelta);
 
-    // Update slider value if we dragged a node that affects rotation
     if (_selectedNodeId == nodeId) {
        _currentRotationValue = _calculateCurrentSwivel(nodeId);
     }
@@ -371,7 +336,6 @@ class _StickmanPoseEditorState extends State<StickmanPoseEditor> {
     }
   }
 
-  // ... [SmartMove, ConstrainedFK, IK methods are same as previous, omitted for brevity but included in build] ...
   void _applySmartMove(String nodeId, v.Vector3 delta) {
     if (delta.length == 0) return;
     bool isEndEffector = ['lHand', 'rHand', 'lFoot', 'rFoot'].contains(nodeId);
@@ -440,10 +404,22 @@ class _StickmanPoseEditorState extends State<StickmanPoseEditor> {
     double cosAlpha = (len1 * len1 + distance * distance - len2 * len2) / (2 * len1 * distance);
     double alpha = acos(cosAlpha.clamp(-1.0, 1.0));
     v.Vector3 armAxis = direction.normalized();
-    // Use current bend plane for stability
-    v.Vector3 currentLimb = jointNode.position - rootPos;
-    v.Vector3 bendNormal = armAxis.cross(currentLimb).normalized();
+
+    v.Vector3? pole;
+    if (jointNode.id.contains('Knee')) pole = v.Vector3(0, 0, -1);
+    else if (jointNode.id.contains('Elbow')) pole = v.Vector3(0, 0, 1);
+
+    v.Vector3 bendNormal;
+    if (pole != null) {
+       bendNormal = armAxis.cross(pole);
+       if (bendNormal.length < 0.001) bendNormal = armAxis.cross(v.Vector3(1, 0, 0));
+    } else {
+       v.Vector3 currentLimb = jointNode.position - rootPos;
+       bendNormal = armAxis.cross(currentLimb);
+    }
+
     if (bendNormal.length < 0.001) bendNormal = v.Vector3(1, 0, 0);
+    bendNormal.normalize();
 
     v.Quaternion q = v.Quaternion.axisAngle(bendNormal, alpha);
     jointNode.position.setFrom(rootPos + (q.rotate(armAxis) * len1));
@@ -454,10 +430,7 @@ class _StickmanPoseEditorState extends State<StickmanPoseEditor> {
   Widget build(BuildContext context) {
     _refreshNodeCache();
     final styleLabel = TextStyle(color: Colors.white70, fontSize: 10);
-
-    // Smaller UI constants
     final double panelWidth = 50.0;
-    final double panelPadding = 40.0;
 
     return LayoutBuilder(
       builder: (context, constraints) {
@@ -539,9 +512,9 @@ class _StickmanPoseEditorState extends State<StickmanPoseEditor> {
                       ),
                     ),
 
-                    // Left Panel (Views, Height, Zoom)
+                    // Left Panel (Views, Height, Zoom) - Moved Up
                     Positioned(
-                      top: panelPadding, left: 5, bottom: 80, width: panelWidth,
+                      top: 50, left: 5, width: panelWidth,
                       child: Column(
                          crossAxisAlignment: CrossAxisAlignment.start,
                          children: [
@@ -549,25 +522,24 @@ class _StickmanPoseEditorState extends State<StickmanPoseEditor> {
                              decoration: BoxDecoration(color: Colors.black54, borderRadius: BorderRadius.circular(6)),
                              child: Column(
                                children: [
-                                 _iconBtn(Icons.threesixty, CameraView.free),
-                                 _iconBtn(Icons.view_sidebar, CameraView.side),
-                                 _iconBtn(Icons.view_agenda, CameraView.top),
-                                 _iconBtn(Icons.view_stream, CameraView.front),
+                                 _viewTextBtn("F", CameraView.free),
+                                 _viewTextBtn("X", CameraView.side, Colors.red),
+                                 _viewTextBtn("Y", CameraView.top, Colors.green),
+                                 _viewTextBtn("Z", CameraView.front, Colors.blue),
                                ],
                              ),
                            ),
-                           const Spacer(),
+                           const SizedBox(height: 15),
                            _verticalSlider(_cameraHeight, -200, 200, (v) => setState(() => _cameraHeight = v), "Hgt"),
                            const SizedBox(height: 10),
                            _verticalSlider(_zoom, 0.5, 10.0, (v) => setState(() => _zoom = v), "Zm"),
-                           const Spacer(),
                          ],
                       ),
                     ),
 
-                    // Right Panel (Axis, Head, Line, Rotate)
+                    // Right Panel (Axis, Head, Line, Rotate) - Moved Up
                     Positioned(
-                      top: panelPadding, right: 5, bottom: 80, width: panelWidth,
+                      top: 50, right: 5, width: panelWidth,
                       child: Column(
                          crossAxisAlignment: CrossAxisAlignment.end,
                          children: [
@@ -582,7 +554,7 @@ class _StickmanPoseEditorState extends State<StickmanPoseEditor> {
                                ],
                              ),
                            ),
-                           const Spacer(),
+                           const SizedBox(height: 15),
                            _verticalSlider(widget.controller.skeleton.headRadius, 2.0, 15.0,
                              (v) => setState(() => widget.controller.skeleton.headRadius = v), "Head"),
                            const SizedBox(height: 10),
@@ -597,7 +569,6 @@ class _StickmanPoseEditorState extends State<StickmanPoseEditor> {
                                 });
                              }, "Rot", Colors.orangeAccent),
                            ],
-                           const Spacer(),
                          ],
                       ),
                     ),
@@ -615,31 +586,7 @@ class _StickmanPoseEditorState extends State<StickmanPoseEditor> {
                               decoration: BoxDecoration(color: Colors.black87, borderRadius: BorderRadius.circular(8)),
                               child: Column(
                                 children: [
-                                  Row(
-                                    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                                    children: [
-                                      _smallBtn(Icons.save, "Save", () async {
-                                        await StickmanPersistence.saveProject(
-                                          _projectClips,
-                                          widget.controller.skeleton.headRadius,
-                                          widget.controller.skeleton.strokeWidth
-                                        );
-                                        if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Saved")));
-                                      }, Colors.teal),
-                                      _smallBtn(Icons.folder_open, "Load", () async {
-                                        final p = await StickmanPersistence.loadProject();
-                                        if (p != null) {
-                                          setState(() {
-                                            _projectClips = p.clips;
-                                            widget.controller.skeleton.headRadius = p.headRadius;
-                                            widget.controller.skeleton.strokeWidth = p.strokeWidth;
-                                          });
-                                          if(_projectClips.isNotEmpty) _activateClip(_projectClips.first);
-                                        }
-                                      }, Colors.orange),
-                                    ],
-                                  ),
-                                  SizedBox(height: 4),
+                                  // Animation Clip Selector
                                   SingleChildScrollView(
                                     scrollDirection: Axis.horizontal,
                                     child: Row(
@@ -655,6 +602,7 @@ class _StickmanPoseEditorState extends State<StickmanPoseEditor> {
                                       ],
                                     ),
                                   ),
+                                  // Playback Controls
                                   Row(
                                     children: [
                                       GestureDetector(
@@ -688,17 +636,43 @@ class _StickmanPoseEditorState extends State<StickmanPoseEditor> {
                                 ],
                               ),
                             ),
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              _textBtn("OBJ", _saveObjToFile, Colors.white24),
-                              SizedBox(width: 8),
-                              _textBtn("Reset", _resetPoseAndDefaults, Colors.redAccent),
-                              if (widget.controller.mode == EditorMode.animate && widget.controller.activeClip != null) ...[
+
+                          // General Toolbar (Scrollable)
+                          SingleChildScrollView(
+                            scrollDirection: Axis.horizontal,
+                            child: Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                _textBtn("OBJ", _saveObjToFile, Colors.white24),
                                 SizedBox(width: 8),
-                                _textBtn("ZIP", _exportZip, Colors.purple),
+                                _textBtn("Reset", _resetPoseAndDefaults, Colors.redAccent),
+                                SizedBox(width: 8),
+                                if (widget.controller.mode == EditorMode.animate && widget.controller.activeClip != null) ...[
+                                  _textBtn("ZIP", _exportZip, Colors.purple),
+                                  SizedBox(width: 8),
+                                ],
+                                _textBtn("Save", () async {
+                                  await StickmanPersistence.saveProject(
+                                    _projectClips,
+                                    widget.controller.skeleton.headRadius,
+                                    widget.controller.skeleton.strokeWidth
+                                  );
+                                  if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Saved")));
+                                }, Colors.teal),
+                                SizedBox(width: 8),
+                                _textBtn("Load", () async {
+                                  final p = await StickmanPersistence.loadProject();
+                                  if (p != null) {
+                                    setState(() {
+                                      _projectClips = p.clips;
+                                      widget.controller.skeleton.headRadius = p.headRadius;
+                                      widget.controller.skeleton.strokeWidth = p.strokeWidth;
+                                    });
+                                    if(_projectClips.isNotEmpty) _activateClip(_projectClips.first);
+                                  }
+                                }, Colors.orange),
                               ],
-                            ],
+                            ),
                           ),
                         ],
                       ),
@@ -727,6 +701,22 @@ class _StickmanPoseEditorState extends State<StickmanPoseEditor> {
     );
   }
 
+  // New text-based button for Camera Views to match Axis buttons
+  Widget _viewTextBtn(String txt, CameraView v, [Color c = Colors.white]) {
+    bool active = _cameraView == v;
+    return InkWell(
+      onTap: () => setState(() => _cameraView = v),
+      child: Container(
+        width: 30, height: 30,
+        alignment: Alignment.center,
+        margin: EdgeInsets.symmetric(vertical: 2),
+        decoration: BoxDecoration(color: active ? Colors.blueAccent : Colors.transparent, borderRadius: BorderRadius.circular(4), border: Border.all(color: Colors.white24)),
+        child: Text(txt, style: TextStyle(color: active ? Colors.white : c, fontWeight: FontWeight.bold, fontSize: 12)),
+      ),
+    );
+  }
+
+  // Legacy icon button - kept just in case, but replaced in UI
   Widget _iconBtn(IconData icon, CameraView v) {
     bool active = _cameraView == v;
     return InkWell(

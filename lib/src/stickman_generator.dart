@@ -170,7 +170,7 @@ class StickmanGenerator {
       // Orbit Head: Slightly Look Up/Forward
       // Equivalent to old: pose.setHead(pose.neck + v.Vector3(0, -8, 0));
       // Using new Orbit helper: Up is Pitch -90 degrees (approx -1.57 rad)
-      _positionHead(pose, 8.0, 0, -pi/2);
+      _positionHead(pose, 8.0, 0, -pi / 2);
 
       frames.add(StickmanKeyframe(pose: pose, frameIndex: i));
     }
