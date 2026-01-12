@@ -393,9 +393,9 @@ class _StickmanPoseEditorState extends State<StickmanPoseEditor> {
     v.Vector3? pole;
     // Check ID to determine pole
     if (jointNode.id.contains('Knee')) {
-       pole = v.Vector3(0, 0, 1); // Knee Forward (+Z)
+       pole = v.Vector3(0, 0, -1); // Knee Backward (-Z) [MODIFIED]
     } else if (jointNode.id.contains('Elbow')) {
-       pole = v.Vector3(0, 0, -1); // Elbow Backward (-Z)
+       pole = v.Vector3(0, 0, 1); // Elbow Forward (+Z) [MODIFIED]
     }
 
     if (pole != null) {
