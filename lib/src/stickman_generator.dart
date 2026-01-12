@@ -285,7 +285,10 @@ class StickmanGenerator {
      v.Vector3 hipPos = pose.hip + v.Vector3(side, 0, 0);
      v.Vector3 footPos = v.Vector3(side, footY, stride);
      v.Vector3 mid = (hipPos + footPos) * 0.5;
-     mid.z += length * 0.6;
+
+     // CHANGED: Invert Z offset for knee to correct bend direction
+     mid.z -= length * 0.6;
+
      if(isLeft) { pose.lKnee=mid; pose.lFoot=footPos; }
      else { pose.rKnee=mid; pose.rFoot=footPos; }
   }
@@ -296,7 +299,8 @@ class StickmanGenerator {
      double swing = (sin(angle) - 0.3) * 0.9;
      double elbowBendOffset = max(0.0, swing) * 4.0;
 
-     v.Vector3 elbow = neck + v.Vector3(side, length, swing * 8);
+     // CHANGED: Invert swing influence on Z to ensure elbow points back
+     v.Vector3 elbow = neck + v.Vector3(side, length, -swing * 8);
      v.Vector3 hand = elbow + v.Vector3(0, length, 5 + swing * 5 + elbowBendOffset);
 
      if(isLeft) { pose.lElbow=elbow; pose.lHand=hand; }
