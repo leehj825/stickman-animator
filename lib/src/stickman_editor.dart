@@ -45,43 +45,77 @@ class _StickmanPoseEditorState extends State<StickmanPoseEditor> {
     super.initState();
     _refreshNodeCache();
     widget.controller.setStrategy(ManualMotionStrategy());
-    // We do NOT generate defaults here anymore.
-    // We wait until the first mode switch or we just initialize empty.
-    // If we init here, they won't have the user's custom pose if they edit it later.
-    // But to show something on first load, we can init defaults.
     _regenerateDefaultClips();
   }
 
   // --- FIX: REGENERATE DEFAULTS ---
-  // This ensures that "Run", "Jump", "Kick" always use the user's current
-  // limb lengths (Pose) when they enter Animate mode.
   void _regenerateDefaultClips() {
     final style = widget.controller.skeleton;
 
-    void updateClip(String name, StickmanClip Function() gen) {
+    void updateOrAdd(String name, StickmanClip Function() gen) {
       final index = _projectClips.indexWhere((c) => c.name == name);
       final newClip = gen();
       if (index != -1) {
+        // Replace existing default clip
         _projectClips[index] = newClip;
       } else {
+        // Add new if not exists
         _projectClips.add(newClip);
       }
     }
 
-    updateClip("Run", () => StickmanGenerator.generateRun(style));
-    updateClip("Jump", () => StickmanGenerator.generateJump(style));
-    updateClip("Kick", () => StickmanGenerator.generateKick(style));
+    updateOrAdd("Run", () => StickmanGenerator.generateRun(style));
+    updateOrAdd("Jump", () => StickmanGenerator.generateJump(style));
+    updateOrAdd("Kick", () => StickmanGenerator.generateKick(style));
+  }
+
+  // --- NEW: RESET FUNCTION ---
+  void _resetPoseAndDefaults() {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text("Reset Pose?"),
+        content: Text("This will reset the skeleton to T-Pose and regenerate the default Run/Jump/Kick animations. Custom animations will be kept."),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: Text("Cancel")),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.pop(ctx);
+              setState(() {
+                // 1. Reset Skeleton to default
+                // StickmanSkeleton is final in Controller, so we lerp to a fresh one instanty
+                widget.controller.skeleton.lerp(StickmanSkeleton(), 1.0);
+
+                // 2. Regenerate Defaults based on this new pose
+                _regenerateDefaultClips();
+
+                // 3. Clear selection
+                _selectedNodeId = null;
+
+                // 4. Force update
+                if (widget.controller.activeClip != null) {
+                   // If we are currently playing a default clip, reload it
+                   final activeName = widget.controller.activeClip!.name;
+                   final reloaded = _projectClips.firstWhere(
+                     (c) => c.name == activeName,
+                     orElse: () => _projectClips.first
+                   );
+                   widget.controller.activeClip = reloaded;
+                }
+              });
+              ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Pose & Defaults Reset!")));
+            },
+            child: Text("Reset")
+          ),
+        ],
+      )
+    );
   }
 
   void _switchMode(EditorMode mode) {
     if (mode == EditorMode.animate) {
-      // FIX: FORCE REGENERATE DEFAULTS from current Pose
-      // This applies the limb length/position changes to the animation.
       _regenerateDefaultClips();
-
-      // Also Sync style (Head radius/stroke)
       _syncProjectStyles();
-
       if (widget.controller.activeClip == null && _projectClips.isNotEmpty) {
         _activateClip(_projectClips.first);
       }
@@ -91,7 +125,6 @@ class _StickmanPoseEditorState extends State<StickmanPoseEditor> {
     });
   }
 
-  // Sync style settings (Line/Head) to the animation frames
   void _syncProjectStyles() {
     final currentStyle = widget.controller.skeleton;
     for (var clip in _projectClips) {
@@ -103,7 +136,7 @@ class _StickmanPoseEditorState extends State<StickmanPoseEditor> {
   }
 
   void _activateClip(StickmanClip clip) {
-    _syncProjectStyles(); // Ensure this clip is fresh style-wise
+    _syncProjectStyles();
     setState(() {
       widget.controller.activeClip = clip;
       widget.controller.currentFrameIndex = 0.0;
@@ -128,7 +161,6 @@ class _StickmanPoseEditorState extends State<StickmanPoseEditor> {
             onPressed: () {
               final name = textController.text.trim();
               if (name.isNotEmpty) {
-                // Generate using CURRENT RIG
                 final newClip = StickmanGenerator.generateEmpty(widget.controller.skeleton);
                 final finalClip = StickmanClip(
                   name: name,
@@ -182,19 +214,14 @@ class _StickmanPoseEditorState extends State<StickmanPoseEditor> {
 
   void _updateBonePosition(String nodeId, Offset screenDelta) {
     if (!_nodes.containsKey(nodeId)) return;
-    final node = _nodes[nodeId]!;
-    widget.controller.lastModifiedBone = node.id;
+    widget.controller.lastModifiedBone = nodeId;
 
     final modelScale = widget.controller.scale;
     if (modelScale == 0) return;
     final scaleFactor = modelScale * _zoom;
 
-    void applyMove(v.Vector3 delta) {
-      node.position.add(delta);
-      if (widget.controller.mode == EditorMode.animate) {
-        widget.controller.saveCurrentPoseToFrame();
-      }
-    }
+    // 1. Calculate the requested delta in World Space
+    v.Vector3 worldDelta = v.Vector3.zero();
 
     if (_cameraView == CameraView.free) {
       final rotMatrix = v.Matrix4.identity()
@@ -202,47 +229,60 @@ class _StickmanPoseEditorState extends State<StickmanPoseEditor> {
         ..rotateY(_rotationY);
 
       if (_axisMode == AxisMode.none) {
-        final invMatrix = v.Matrix4.inverted(rotMatrix);
-        final deltaView = v.Vector3(screenDelta.dx, screenDelta.dy, 0);
-        final worldMove = invMatrix.transform3(deltaView);
-        worldMove.scale(1.0 / scaleFactor);
-        applyMove(worldMove);
+        // --- NEW: Camera-Relative Movement ---
+        // Calculate Camera Right and Down vectors in World Space based on rotation
+
+        double cosY = cos(_rotationY);
+        double sinY = sin(_rotationY);
+        double cosX = cos(_rotationX);
+        double sinX = sin(_rotationX);
+
+        // Screen Right (X+) corresponds to this world vector:
+        v.Vector3 camRight = v.Vector3(cosY, 0, -sinY);
+
+        // Screen Down (Y+) corresponds to this world vector:
+        // (Note: Screen Y is Down, so we calculate the vector that maps to Y+)
+        v.Vector3 camDown = v.Vector3(
+          -sinY * sinX,
+          cosX,
+          -cosY * sinX
+        );
+
+        worldDelta = (camRight * screenDelta.dx + camDown * screenDelta.dy) / scaleFactor;
+
       } else {
-        _applyAxisConstrainedMove(node, screenDelta, scaleFactor, rotMatrix);
-        if (widget.controller.mode == EditorMode.animate) {
-          widget.controller.saveCurrentPoseToFrame();
-        }
+        worldDelta = _calculateAxisConstrainedDelta(screenDelta, scaleFactor, rotMatrix);
       }
     } else {
       double dx = screenDelta.dx / scaleFactor;
       double dy = screenDelta.dy / scaleFactor;
-      v.Vector3 delta = v.Vector3.zero();
 
       if (_axisMode == AxisMode.none) {
-        if (_cameraView == CameraView.front) {
-          delta.setValues(dx, dy, 0);
-        } else if (_cameraView == CameraView.side) {
-          delta.setValues(0, dy, dx);
-        } else if (_cameraView == CameraView.top) {
-          delta.setValues(dx, 0, dy);
-        }
+        if (_cameraView == CameraView.front) worldDelta.setValues(dx, dy, 0);
+        else if (_cameraView == CameraView.side) worldDelta.setValues(0, dy, dx);
+        else if (_cameraView == CameraView.top) worldDelta.setValues(dx, 0, dy);
       } else {
         if (_cameraView == CameraView.front) {
-           if (_axisMode == AxisMode.x) delta.x = dx;
-           if (_axisMode == AxisMode.y) delta.y = dy;
+           if (_axisMode == AxisMode.x) worldDelta.x = dx;
+           if (_axisMode == AxisMode.y) worldDelta.y = dy;
         } else if (_cameraView == CameraView.side) {
-           if (_axisMode == AxisMode.z) delta.z = dx;
-           if (_axisMode == AxisMode.y) delta.y = dy;
+           if (_axisMode == AxisMode.z) worldDelta.z = dx;
+           if (_axisMode == AxisMode.y) worldDelta.y = dy;
         } else if (_cameraView == CameraView.top) {
-           if (_axisMode == AxisMode.x) delta.x = dx;
-           if (_axisMode == AxisMode.z) delta.z = dy;
+           if (_axisMode == AxisMode.x) worldDelta.x = dx;
+           if (_axisMode == AxisMode.z) worldDelta.z = dy;
         }
       }
-      applyMove(delta);
+    }
+
+    _applySmartMove(nodeId, worldDelta);
+
+    if (widget.controller.mode == EditorMode.animate) {
+      widget.controller.saveCurrentPoseToFrame();
     }
   }
 
-  void _applyAxisConstrainedMove(StickmanNode node, Offset screenDelta, double scaleFactor, v.Matrix4 rotMatrix) {
+  v.Vector3 _calculateAxisConstrainedDelta(Offset screenDelta, double scaleFactor, v.Matrix4 rotMatrix) {
       v.Vector3 axisDir;
       if (_axisMode == AxisMode.x) axisDir = v.Vector3(1, 0, 0);
       else if (_axisMode == AxisMode.y) axisDir = v.Vector3(0, 1, 0);
@@ -251,12 +291,152 @@ class _StickmanPoseEditorState extends State<StickmanPoseEditor> {
       final viewAxis = rotMatrix.transform3(axisDir.clone());
       final screenAxisDir = Offset(viewAxis.x, viewAxis.y);
       double screenMag = screenAxisDir.distance;
-      if (screenMag < 0.001) return;
+      if (screenMag < 0.001) return v.Vector3.zero();
 
       final screenAxisUnit = screenAxisDir / screenMag;
       double projection = screenDelta.dx * screenAxisUnit.dx + screenDelta.dy * screenAxisUnit.dy;
-      double worldMove = projection / (scaleFactor * screenMag);
-      node.position.add(axisDir * worldMove);
+      double worldMoveAmount = projection / (scaleFactor * screenMag);
+      return axisDir * worldMoveAmount;
+  }
+
+  void _applySmartMove(String nodeId, v.Vector3 delta) {
+    if (delta.length == 0) return;
+
+    bool isEndEffector = ['lHand', 'rHand', 'lFoot', 'rFoot'].contains(nodeId);
+    bool isMidJoint = ['lElbow', 'rElbow', 'lKnee', 'rKnee'].contains(nodeId);
+    bool isRoot = nodeId == 'hip';
+    bool isNeck = nodeId == 'neck';
+
+    if (isRoot) {
+      _recursiveMove(_nodes['hip']!, delta);
+    } else if (isNeck) {
+      _applyConstrainedFKMove(nodeId, 'hip', delta);
+    } else if (isMidJoint) {
+      String parentId = _getParentId(nodeId);
+      if (parentId.isNotEmpty) {
+        _applyConstrainedFKMove(nodeId, parentId, delta);
+      }
+    } else if (isEndEffector) {
+      _applyIKMove(nodeId, delta);
+    } else {
+      if (_nodes.containsKey(nodeId)) {
+        _recursiveMove(_nodes[nodeId]!, delta);
+      }
+    }
+  }
+
+  String _getParentId(String nodeId) {
+    if (nodeId == 'lElbow' || nodeId == 'rElbow') return 'neck';
+    if (nodeId == 'lKnee' || nodeId == 'rKnee') return 'hip';
+    if (nodeId == 'lHand') return 'lElbow';
+    if (nodeId == 'rHand') return 'rElbow';
+    if (nodeId == 'lFoot') return 'lKnee';
+    if (nodeId == 'rFoot') return 'rKnee';
+    if (nodeId == 'neck') return 'hip';
+    if (nodeId == 'head') return 'neck';
+    return '';
+  }
+
+  void _recursiveMove(StickmanNode node, v.Vector3 delta) {
+    node.position.add(delta);
+    for (var child in node.children) {
+      _recursiveMove(child, delta);
+    }
+  }
+
+  void _applyConstrainedFKMove(String nodeId, String parentId, v.Vector3 requestedDelta) {
+    final node = _nodes[nodeId]!;
+    final parent = _nodes[parentId]!;
+    v.Vector3 oldPos = node.position.clone();
+    v.Vector3 targetPos = oldPos + requestedDelta;
+
+    double currentLength = oldPos.distanceTo(parent.position);
+    v.Vector3 dir = targetPos - parent.position;
+    double newLen = dir.length;
+
+    v.Vector3 constrainedPos;
+    if (newLen > 0.001) {
+      dir.normalize();
+      constrainedPos = parent.position + (dir * currentLength);
+    } else {
+      constrainedPos = oldPos;
+    }
+
+    v.Vector3 effectiveDelta = constrainedPos - oldPos;
+    _recursiveMove(node, effectiveDelta);
+  }
+
+  void _applyIKMove(String effectorId, v.Vector3 delta) {
+    final effector = _nodes[effectorId]!;
+    String jointId = _getParentId(effectorId);
+    if (jointId.isEmpty) return;
+    final joint = _nodes[jointId]!;
+
+    String rootId = _getParentId(jointId);
+    if (rootId.isEmpty) return;
+    final root = _nodes[rootId]!;
+
+    double lenUpper = joint.position.distanceTo(root.position);
+    double lenLower = effector.position.distanceTo(joint.position);
+
+    v.Vector3 targetEffectorPos = effector.position + delta;
+
+    _solveTwoBoneIK(root.position, joint, effector, targetEffectorPos, lenUpper, lenLower);
+  }
+
+  void _solveTwoBoneIK(v.Vector3 rootPos, StickmanNode jointNode, StickmanNode effectorNode, v.Vector3 targetPos, double len1, double len2) {
+    v.Vector3 direction = targetPos - rootPos;
+    double distance = direction.length;
+
+    // 1. Clamp Target
+    if (distance > (len1 + len2)) {
+      direction.normalize();
+      targetPos = rootPos + (direction * (len1 + len2));
+      distance = len1 + len2;
+    }
+
+    // 2. Solve Angle
+    double cosAlpha = (len1 * len1 + distance * distance - len2 * len2) / (2 * len1 * distance);
+    if (cosAlpha > 1.0) cosAlpha = 1.0;
+    if (cosAlpha < -1.0) cosAlpha = -1.0;
+    double alpha = acos(cosAlpha);
+
+    // 3. Determine Rotation Axis (Bend Normal)
+    v.Vector3 armAxis = direction.normalized();
+    v.Vector3 bendNormal = v.Vector3.zero();
+
+    // STRICT CONSTRAINTS (Revived)
+    v.Vector3? pole;
+    // Check ID to determine pole
+    if (jointNode.id.contains('Knee')) {
+       pole = v.Vector3(0, 0, -1); // Knee Backward (-Z)
+    } else if (jointNode.id.contains('Elbow')) {
+       pole = v.Vector3(0, 0, 1); // Elbow Forward (+Z)
+    }
+
+    if (pole != null) {
+       bendNormal = armAxis.cross(pole);
+       // Handle collinear case
+       if (bendNormal.length < 0.001) {
+          bendNormal = armAxis.cross(v.Vector3(1, 0, 0));
+       }
+    } else {
+       // Fallback for non-constrained limbs: Use current state
+       v.Vector3 currentLimbVector = jointNode.position - rootPos;
+       bendNormal = armAxis.cross(currentLimbVector);
+    }
+
+    bendNormal.normalize();
+    if (bendNormal.length == 0) bendNormal = v.Vector3(1, 0, 0); // Safety
+
+    // 4. Calculate New Joint
+    v.Quaternion q = v.Quaternion.axisAngle(bendNormal, alpha);
+    v.Vector3 upperArmVec = q.rotate(armAxis) * len1;
+    v.Vector3 newJointPos = rootPos + upperArmVec;
+
+    // 5. Update
+    jointNode.position.setFrom(newJointPos);
+    effectorNode.position.setFrom(targetPos);
   }
 
   @override
@@ -550,17 +730,12 @@ class _StickmanPoseEditorState extends State<StickmanPoseEditor> {
                             mainAxisSize: MainAxisSize.min,
                             children: [
                               ElevatedButton(onPressed: _saveObjToFile, child: const Text("OBJ")),
-                              if (widget.controller.mode == EditorMode.pose) ...[
-                                const SizedBox(width: 16),
-                                ElevatedButton(
-                                  onPressed: () {
-                                    _regenerateDefaultClips();
-                                    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Default Animations Regenerated!")));
-                                  },
-                                  style: ElevatedButton.styleFrom(backgroundColor: Colors.deepOrange),
-                                  child: const Text("Regen"),
-                                ),
-                              ],
+                              const SizedBox(width: 16),
+                              ElevatedButton(
+                                onPressed: _resetPoseAndDefaults,
+                                style: ElevatedButton.styleFrom(backgroundColor: Colors.redAccent),
+                                child: const Text("Reset All"),
+                              ),
                               if (widget.controller.mode == EditorMode.animate && widget.controller.activeClip != null) ...[
                                 const SizedBox(width: 16),
                                 ElevatedButton(
