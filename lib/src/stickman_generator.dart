@@ -5,283 +5,268 @@ import 'stickman_animation.dart';
 
 class StickmanGenerator {
 
-  // --- HELPER: Interpolate between two skeletons ---
-  static StickmanSkeleton _lerpPose(StickmanSkeleton a, StickmanSkeleton b, double t) {
-    StickmanSkeleton result = a.clone();
-    result.lerp(b, t);
-    return result;
+  // --- HELPER: Solve Joint Position (Exact Lengths) ---
+  static void _setLimbIK(
+      StickmanSkeleton pose,
+      String side, // 'l' or 'r'
+      String limb, // 'Arm' or 'Leg'
+      v.Vector3 targetPos,
+      v.Vector3 bendHint
+  ) {
+    // 1. Identify Nodes
+    String rootId = (limb == 'Leg') ? 'hip' : 'neck';
+    String jointId = '$side${limb == 'Leg' ? 'Knee' : 'Elbow'}';
+    String effectorId = '$side${limb == 'Leg' ? 'Foot' : 'Hand'}';
+
+    v.Vector3 rootPos = (limb == 'Leg') ? pose.hip : pose.neck;
+
+    // 2. Get Lengths from current pose (assuming style is applied)
+    // We assume standard lengths if not set, but we should use the pose's current distance
+    // However, since we are generating from scratch, we define standard lengths
+    // or assume the pose passed in has the correct lengths.
+    // For a generator, we usually want fixed standard lengths or proportional to height.
+    double len1 = (limb == 'Leg') ? 13.0 : 10.0;
+    double len2 = (limb == 'Leg') ? 13.0 : 10.0;
+
+    // 3. IK Math (Circle Intersection / Law of Cosines)
+    v.Vector3 dir = targetPos - rootPos;
+    double dist = dir.length;
+
+    // Clamp reach
+    if (dist > len1 + len2 - 0.01) {
+      dir.normalize();
+      targetPos = rootPos + dir * (len1 + len2 - 0.01);
+      dist = len1 + len2 - 0.01;
+    }
+
+    // Law of Cosines for angle at Root
+    // c^2 = a^2 + b^2 - 2ab cos(C) -> len2^2 = len1^2 + dist^2 - 2*len1*dist*cos(alpha)
+    double cosAlpha = (len1*len1 + dist*dist - len2*len2) / (2 * len1 * dist);
+    double alpha = acos(cosAlpha.clamp(-1.0, 1.0));
+
+    // Rotation Axis
+    // We need a normal vector perpendicular to the limb plane.
+    // We use the 'bendHint' to define this plane.
+    v.Vector3 armAxis = dir.normalized();
+    v.Vector3 bendNormal = armAxis.cross(bendHint).normalized();
+
+    // If aligned (straight), fallback to X axis
+    if (bendNormal.length == 0) bendNormal = v.Vector3(1, 0, 0);
+
+    // Rotate root->target vector by alpha around bendNormal
+    v.Quaternion q = v.Quaternion.axisAngle(bendNormal, alpha);
+    v.Vector3 jointPos = rootPos + (q.rotate(armAxis) * len1);
+
+    // 4. Set Positions
+    if (jointId == 'lKnee') pose.lKnee = jointPos;
+    if (jointId == 'rKnee') pose.rKnee = jointPos;
+    if (jointId == 'lElbow') pose.lElbow = jointPos;
+    if (jointId == 'rElbow') pose.rElbow = jointPos;
+
+    if (effectorId == 'lFoot') pose.lFoot = targetPos;
+    if (effectorId == 'rFoot') pose.rFoot = targetPos;
+    if (effectorId == 'lHand') pose.lHand = targetPos;
+    if (effectorId == 'rHand') pose.rHand = targetPos;
   }
 
-  // --- HELPER: Generate Frames from Key Poses ---
-  // keyPoses is a Map where key = normalized time (0.0 to 1.0) and value = Pose
-  static List<StickmanKeyframe> _generateFramesFromPoses(
-      Map<double, StickmanSkeleton> keyPoses, int totalFrames, StickmanSkeleton? style) {
+  static void _applyStyle(StickmanSkeleton pose, StickmanSkeleton? style) {
+    if (style != null) {
+      pose.headRadius = style.headRadius;
+      pose.strokeWidth = style.strokeWidth;
+    }
+  }
 
+  // --- 1. RUN ANIMATION (Corrected Direction & Lengths) ---
+  static StickmanClip generateRun(StickmanSkeleton? style) {
     List<StickmanKeyframe> frames = [];
-    List<double> times = keyPoses.keys.toList()..sort();
+    int totalFrames = 24;
 
     for (int i = 0; i < totalFrames; i++) {
-      double t = i / (totalFrames - 1); // 0.0 to 1.0 inclusive (or close for looping)
+      double t = i / totalFrames;
+      double angle = t * 2 * pi;
 
-      // For looping animations, we might want i / totalFrames and handle wrap around,
-      // but here we assume the user provides 0.0 and 1.0 poses match if looping.
+      StickmanSkeleton pose = StickmanSkeleton();
+      _applyStyle(pose, style);
 
-      // Find surrounding keyframes
-      double t1 = 0.0;
-      double t2 = 1.0;
-      StickmanSkeleton p1 = keyPoses[times.first]!;
-      StickmanSkeleton p2 = keyPoses[times.last]!;
+      // Body Bobbing
+      pose.hip.y = cos(angle * 2) * 1.5;
+      pose.neck.setValues(0, -25 + pose.hip.y + 2, 5); // Lean forward (+Z is forward)
 
-      for (int k = 0; k < times.length - 1; k++) {
-        if (t >= times[k] && t <= times[k+1]) {
-          t1 = times[k];
-          t2 = times[k+1];
-          p1 = keyPoses[t1]!;
-          p2 = keyPoses[t2]!;
-          break;
-        }
-      }
+      // --- Leg Cycle ---
+      // 0.0 = Left Contact, Right Back
+      // 0.5 = Right Contact, Left Back
+      // Phase Shift: Right leg is pi ahead of Left
 
-      // Local interpolation factor
-      double localT = (t - t1) / (t2 - t1);
-      if ((t2 - t1) == 0) localT = 0;
+      // Left Leg
+      double lPhase = angle;
+      v.Vector3 lTarget = _calculateRunFootPos(lPhase, isLeft: true);
+      _setLimbIK(pose, 'l', 'Leg', lTarget, v.Vector3(0, 0, 1)); // Knee Bend Forward (+Z)
 
-      StickmanSkeleton pose = _lerpPose(p1, p2, localT);
+      // Right Leg
+      double rPhase = angle + pi;
+      v.Vector3 rTarget = _calculateRunFootPos(rPhase, isLeft: false);
+      _setLimbIK(pose, 'r', 'Leg', rTarget, v.Vector3(0, 0, 1)); // Knee Bend Forward (+Z)
 
-      // Apply global style if provided
-      if (style != null) {
-        pose.headRadius = style.headRadius;
-        pose.strokeWidth = style.strokeWidth;
-      }
+      // --- Arm Cycle (Opposite to legs) ---
+      // Left Arm swings with Right Leg
+      v.Vector3 lArmT = _calculateRunHandPos(rPhase, isLeft: true);
+      _setLimbIK(pose, 'l', 'Arm', lArmT, v.Vector3(0, 0, -1)); // Elbow Bend Backward (-Z)
+
+      // Right Arm swings with Left Leg
+      v.Vector3 rArmT = _calculateRunHandPos(lPhase, isLeft: false);
+      _setLimbIK(pose, 'r', 'Arm', rArmT, v.Vector3(0, 0, -1)); // Elbow Bend Backward (-Z)
+
+      // Update Head
+      pose.setHead(pose.neck + v.Vector3(0, -8, 0));
 
       frames.add(StickmanKeyframe(pose: pose, frameIndex: i));
     }
-    return frames;
+    return StickmanClip(name: "Run", keyframes: frames, fps: 30, isLooping: true);
   }
 
-  // --- HELPER: Pose Construction ---
-  // Creates a skeleton with specific limb positions
-  static StickmanSkeleton _createPose({
-    v.Vector3? hip,
-    v.Vector3? neck,
-    v.Vector3? lHand, v.Vector3? rHand,
-    v.Vector3? lElbow, v.Vector3? rElbow,
-    v.Vector3? lFoot, v.Vector3? rFoot,
-    v.Vector3? lKnee, v.Vector3? rKnee,
-  }) {
-    final s = StickmanSkeleton();
-    if (hip != null) s.hip.setFrom(hip);
-    if (neck != null) s.neck.setFrom(neck);
-    else s.neck.setFrom(s.hip + v.Vector3(0, -15, 0));
+  static v.Vector3 _calculateRunFootPos(double angle, {required bool isLeft}) {
+    double x = isLeft ? -4 : 4;
+    double strideLen = 15.0;
+    double liftHeight = 8.0;
 
-    // Default head relative to neck
-    s.setHead(s.neck + v.Vector3(0, -8, 0));
+    double cosA = cos(angle);
+    double sinA = sin(angle);
 
-    if (lHand != null) s.lHand.setFrom(lHand);
-    if (rHand != null) s.rHand.setFrom(rHand);
-    if (lElbow != null) s.lElbow.setFrom(lElbow);
-    if (rElbow != null) s.rElbow.setFrom(rElbow);
+    // Z: Forward/Back motion (Sin wave)
+    // +Z is Forward.
+    // When sin > 0 (0 to pi), foot moves Back (Stance phase) relative to hip?
+    // No, if running forward, foot moves BACK relative to body during contact.
+    // Stance: Z goes + to -
+    // Swing: Z goes - to +
 
-    if (lFoot != null) s.lFoot.setFrom(lFoot);
-    if (rFoot != null) s.rFoot.setFrom(rFoot);
-    if (lKnee != null) s.lKnee.setFrom(lKnee);
-    if (rKnee != null) s.rKnee.setFrom(rKnee);
+    double z = -sinA * strideLen;
 
-    return s;
+    // Y: Up/Down.
+    // Contact phase (approx sin > -0.5 to 0.5? No, simpler:)
+    // Lift foot when moving forward (Swing)
+    double y = 25.0; // Ground
+    if (sinA < 0) { // Swing phase (moving forward)
+       y -= sin(angle * 1) * liftHeight * -1.0; // Arch up
+       y = min(25.0, y);
+    }
+
+    return v.Vector3(x, y, z);
   }
 
-  // --- 1. RUN ANIMATION (Looping) ---
-  static StickmanClip generateRun(StickmanSkeleton? style) {
-    // We define 5 key poses for a full cycle (0% -> 25% -> 50% -> 75% -> 100%)
-    // 0% and 100% must be identical for looping.
-    // Z-Axis: +Z is Forward, -Z is Backward.
-    // Y-Axis: +Y is Down. Ground is approx 25.
+  static v.Vector3 _calculateRunHandPos(double angle, {required bool isLeft}) {
+    double x = isLeft ? -8 : 8;
+    // Arms swing opposite to leg (passed in phase is leg phase)
+    // Arm swings forward when leg moves back (Stance)
 
-    final poses = <double, StickmanSkeleton>{};
+    double swing = sin(angle) * 12.0;
+    double z = swing;
+    double y = -5.0 + abs(cos(angle)) * 2; // Slight bob
 
-    // POSE 1: Left Heel Strike (Left Leg Forward, Right Arm Forward)
-    poses[0.0] = _createPose(
-      hip: v.Vector3(0, 2, 0),
-      neck: v.Vector3(0, -13, 5), // Lean forward
-      // Left Leg (Front)
-      lKnee: v.Vector3(-3, 15, 10), // Knee Forward
-      lFoot: v.Vector3(-3, 25, 12), // Foot Forward on ground
-      // Right Leg (Back - Toe Off)
-      rKnee: v.Vector3(3, 15, -5),
-      rFoot: v.Vector3(3, 20, -15), // Foot Back in air
-      // Left Arm (Back - Counter balance)
-      lElbow: v.Vector3(-6, -5, -8), // Elbow Back
-      lHand: v.Vector3(-8, 5, -12),
-      // Right Arm (Front)
-      rElbow: v.Vector3(6, -5, 5),
-      rHand: v.Vector3(8, -8, 12), // Hand Forward/Up
-    );
-
-    // POSE 2: Mid-Stance Left (Right Leg Passing)
-    poses[0.25] = _createPose(
-      hip: v.Vector3(0, 0, 0), // Lowest point
-      neck: v.Vector3(0, -15, 5),
-      // Left Leg (Supporting)
-      lKnee: v.Vector3(-3, 12, 5), // Slight bend
-      lFoot: v.Vector3(-3, 25, 0), // Directly under hip
-      // Right Leg (Passing)
-      rKnee: v.Vector3(3, 10, 15), // High knee forward
-      rFoot: v.Vector3(3, 20, 5),
-      // Arms Mid Swing
-      lElbow: v.Vector3(-6, -7, 0),
-      lHand: v.Vector3(-8, 5, 0),
-      rElbow: v.Vector3(6, -7, 0),
-      rHand: v.Vector3(8, 5, 0),
-    );
-
-    // POSE 3: Right Heel Strike (Right Leg Forward, Left Arm Forward) - Mirror of Pose 1
-    poses[0.5] = _createPose(
-      hip: v.Vector3(0, 2, 0),
-      neck: v.Vector3(0, -13, 5),
-      // Right Leg (Front)
-      rKnee: v.Vector3(3, 15, 10),
-      rFoot: v.Vector3(3, 25, 12),
-      // Left Leg (Back)
-      lKnee: v.Vector3(-3, 15, -5),
-      lFoot: v.Vector3(-3, 20, -15),
-      // Right Arm (Back)
-      rElbow: v.Vector3(6, -5, -8),
-      rHand: v.Vector3(8, 5, -12),
-      // Left Arm (Front)
-      lElbow: v.Vector3(-6, -5, 5),
-      lHand: v.Vector3(-8, -8, 12),
-    );
-
-    // POSE 4: Mid-Stance Right (Left Leg Passing) - Mirror of Pose 2
-    poses[0.75] = _createPose(
-      hip: v.Vector3(0, 0, 0),
-      neck: v.Vector3(0, -15, 5),
-      // Right Leg (Supporting)
-      rKnee: v.Vector3(3, 12, 5),
-      rFoot: v.Vector3(3, 25, 0),
-      // Left Leg (Passing)
-      lKnee: v.Vector3(-3, 10, 15),
-      lFoot: v.Vector3(-3, 20, 5),
-      // Arms
-      lElbow: v.Vector3(-6, -7, 0),
-      lHand: v.Vector3(-8, 5, 0),
-      rElbow: v.Vector3(6, -7, 0),
-      rHand: v.Vector3(8, 5, 0),
-    );
-
-    // POSE 5: Loop Closure (Same as 0.0)
-    poses[1.0] = poses[0.0]!;
-
-    return StickmanClip(
-      name: "Run",
-      keyframes: _generateFramesFromPoses(poses, 30, style), // 30 frames for smoothness
-      fps: 30,
-      isLooping: true
-    );
+    // Relative to Neck (0, -15, 0)
+    // Absolute position:
+    return v.Vector3(0, -15, 0) + v.Vector3(x, 15 + y, z);
   }
 
-  // --- 2. KICK ANIMATION (Linear Sequence) ---
-  static StickmanClip generateKick(StickmanSkeleton? style) {
-    final poses = <double, StickmanSkeleton>{};
+  static double abs(double v) => v > 0 ? v : -v;
 
-    // 1. Stance (Neutral Fighting)
-    poses[0.0] = _createPose(
-      hip: v.Vector3(0, 5, 0),
-      neck: v.Vector3(0, -10, 0),
-      lFoot: v.Vector3(-5, 25, 5), lKnee: v.Vector3(-5, 15, 2),
-      rFoot: v.Vector3(5, 25, -5), rKnee: v.Vector3(5, 15, -2),
-      lHand: v.Vector3(-8, -5, 8), lElbow: v.Vector3(-6, -2, 4), // Guard up
-      rHand: v.Vector3(8, -5, 5), rElbow: v.Vector3(6, -2, 2),
-    );
-
-    // 2. Chamber (Knee Up)
-    poses[0.3] = _createPose(
-      hip: v.Vector3(-2, 5, 0), // Shift weight left
-      neck: v.Vector3(-2, -10, 0),
-      lFoot: v.Vector3(-5, 25, 0), lKnee: v.Vector3(-5, 15, 2), // Pivot leg
-      // Right leg knee up high
-      rKnee: v.Vector3(5, -5, 10),
-      rFoot: v.Vector3(5, 5, 5),
-      // Arms balance
-      lHand: v.Vector3(-8, -5, 10),
-      rHand: v.Vector3(8, 0, -5),
-    );
-
-    // 3. Extension (Strike)
-    poses[0.5] = _createPose(
-      hip: v.Vector3(-5, 5, 0),
-      neck: v.Vector3(-8, -10, 0), // Lean back
-      lFoot: v.Vector3(-5, 25, 0),
-      // Full extension
-      rKnee: v.Vector3(5, -5, 15),
-      rFoot: v.Vector3(5, -10, 25), // High kick forward
-      // Arms counter balance
-      lHand: v.Vector3(-8, -5, 10), // Guard face
-      rHand: v.Vector3(10, 5, -10), // Swing back
-    );
-
-    // 4. Retract (Back to Chamber)
-    poses[0.7] = poses[0.3]!;
-
-    // 5. Land (Stance)
-    poses[1.0] = poses[0.0]!;
-
-    return StickmanClip(
-      name: "Kick",
-      keyframes: _generateFramesFromPoses(poses, 30, style),
-      fps: 30,
-      isLooping: false
-    );
-  }
-
-  // --- 3. JUMP ANIMATION ---
+  // --- 2. JUMP ANIMATION (Fixed Lengths) ---
   static StickmanClip generateJump(StickmanSkeleton? style) {
-    final poses = <double, StickmanSkeleton>{};
+    List<StickmanKeyframe> frames = [];
+    int totalFrames = 30;
 
-    // 1. Neutral
-    poses[0.0] = _createPose(
-      hip: v.Vector3(0, 0, 0),
-      lFoot: v.Vector3(-4, 25, 0), rFoot: v.Vector3(4, 25, 0),
-    );
+    for (int i = 0; i < totalFrames; i++) {
+      double t = i / totalFrames;
+      StickmanSkeleton pose = StickmanSkeleton();
+      _applyStyle(pose, style);
 
-    // 2. Squat (Anticipation)
-    poses[0.2] = _createPose(
-      hip: v.Vector3(0, 15, 0), // Low
-      neck: v.Vector3(0, 0, 5), // Lean forward
-      lFoot: v.Vector3(-4, 25, 0), rFoot: v.Vector3(4, 25, 0),
-      lKnee: v.Vector3(-4, 20, 10), rKnee: v.Vector3(4, 20, 10), // Knees forward
-      lHand: v.Vector3(-10, 15, -5), rHand: v.Vector3(10, 15, -5), // Arms back
-    );
+      // Phases: 0.0-0.3 (Squat), 0.3-0.5 (Launch), 0.5-0.8 (Air), 0.8-1.0 (Land)
+      double hipY = 0;
+      double kneeBendZ = 1.0; // Forward
 
-    // 3. Apex (Air - Tuck)
-    poses[0.5] = _createPose(
-      hip: v.Vector3(0, -20, 0), // High in air
-      neck: v.Vector3(0, -35, 0),
-      lFoot: v.Vector3(-4, 0, -5), rFoot: v.Vector3(4, 0, -5), // Feet up
-      lKnee: v.Vector3(-4, -10, 15), rKnee: v.Vector3(4, -10, 15), // Knees high
-      lHand: v.Vector3(-10, -45, 10), rHand: v.Vector3(10, -45, 10), // Arms up!
-      lElbow: v.Vector3(-8, -35, 0), rElbow: v.Vector3(8, -35, 0),
-    );
+      if (t < 0.2) { // Squat
+         hipY = _lerp(0, 15, t/0.2);
+      } else if (t < 0.5) { // Up
+         hipY = _lerp(15, -20, (t-0.2)/0.3);
+      } else if (t < 0.8) { // Down
+         hipY = _lerp(-20, 0, (t-0.5)/0.3);
+      } else { // Recover
+         hipY = _lerp(0, 0, (t-0.8)/0.2);
+      }
 
-    // 4. Impact (Squat)
-    poses[0.8] = _createPose(
-      hip: v.Vector3(0, 15, 0), // Low
-      neck: v.Vector3(0, 0, 5),
-      lFoot: v.Vector3(-4, 25, 0), rFoot: v.Vector3(4, 25, 0),
-      lKnee: v.Vector3(-4, 20, 10), rKnee: v.Vector3(4, 20, 10),
-      lHand: v.Vector3(-10, 10, 0), rHand: v.Vector3(10, 10, 0), // Stabilize
-    );
+      pose.hip.y = hipY;
+      pose.neck.setValues(0, -15 + hipY, 0);
 
-    // 5. Recover (Neutral)
-    poses[1.0] = poses[0.0]!;
+      // Feet planted (until jump)
+      double footY = 25;
+      if (t > 0.3 && t < 0.8) footY = hipY + 25 - 5; // Lift feet in air
 
-    return StickmanClip(
-      name: "Jump",
-      keyframes: _generateFramesFromPoses(poses, 40, style),
-      fps: 30,
-      isLooping: false
-    );
+      _setLimbIK(pose, 'l', 'Leg', v.Vector3(-4, footY, 0), v.Vector3(0,0,1));
+      _setLimbIK(pose, 'r', 'Leg', v.Vector3(4, footY, 0), v.Vector3(0,0,1));
+
+      // Arms swing
+      double armZ = -5;
+      double armY = 0;
+      if (t < 0.2) { armZ = -10; armY = 5; } // Back
+      else if (t < 0.5) { armZ = 15; armY = -15; } // Up!
+      else { armZ = 0; armY = 0; }
+
+      _setLimbIK(pose, 'l', 'Arm', pose.neck + v.Vector3(-8, 10+armY, armZ), v.Vector3(0,0,-1));
+      _setLimbIK(pose, 'r', 'Arm', pose.neck + v.Vector3(8, 10+armY, armZ), v.Vector3(0,0,-1));
+
+      pose.setHead(pose.neck + v.Vector3(0,-8,0));
+      frames.add(StickmanKeyframe(pose: pose, frameIndex: i));
+    }
+    return StickmanClip(name: "Jump", keyframes: frames, fps: 30, isLooping: false);
   }
+
+  // --- 3. KICK ANIMATION ---
+  static StickmanClip generateKick(StickmanSkeleton? style) {
+    List<StickmanKeyframe> frames = [];
+    int totalFrames = 30;
+
+    for (int i = 0; i < totalFrames; i++) {
+      double t = i / totalFrames;
+      StickmanSkeleton pose = StickmanSkeleton();
+      _applyStyle(pose, style);
+
+      // Stance
+      v.Vector3 hip = v.Vector3(0, 0, 0);
+      v.Vector3 lFoot = v.Vector3(-5, 25, 5);
+      v.Vector3 rFoot = v.Vector3(5, 25, -5);
+
+      if (t < 0.3) { // Chamber
+         double pt = t/0.3;
+         hip.x = _lerp(0, -5, pt);
+         rFoot = v.Vector3(5, _lerp(25, 10, pt), _lerp(-5, 5, pt)); // Lift
+      } else if (t < 0.6) { // Kick
+         double pt = (t-0.3)/0.3;
+         hip.x = -5;
+         // High kick
+         rFoot = v.Vector3(5, _lerp(10, -5, pt), _lerp(5, 20, pt));
+      } else { // Return
+         double pt = (t-0.6)/0.4;
+         hip.x = _lerp(-5, 0, pt);
+         rFoot = v.Vector3(5, _lerp(-5, 25, pt), _lerp(20, -5, pt));
+      }
+
+      pose.hip = hip;
+      pose.neck.setValues(0, -15 + hip.y, 0);
+
+      _setLimbIK(pose, 'l', 'Leg', lFoot, v.Vector3(0,0,1));
+      // Right leg kicks forward (+Z)
+      _setLimbIK(pose, 'r', 'Leg', rFoot, v.Vector3(0,0,1));
+
+      // Guard Arms
+      _setLimbIK(pose, 'l', 'Arm', pose.neck + v.Vector3(-8, 5, 5), v.Vector3(0,0,-1));
+      _setLimbIK(pose, 'r', 'Arm', pose.neck + v.Vector3(8, 5, -5), v.Vector3(0,0,-1));
+
+      pose.setHead(pose.neck + v.Vector3(0,-8,0));
+      frames.add(StickmanKeyframe(pose: pose, frameIndex: i));
+    }
+    return StickmanClip(name: "Kick", keyframes: frames, fps: 30, isLooping: false);
+  }
+
+  static double _lerp(double a, double b, double t) => a + (b - a) * t;
 
   static StickmanClip generateEmpty(StickmanSkeleton? style) {
     List<StickmanKeyframe> frames = [];
