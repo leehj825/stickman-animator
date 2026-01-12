@@ -229,11 +229,27 @@ class _StickmanPoseEditorState extends State<StickmanPoseEditor> {
         ..rotateY(_rotationY);
 
       if (_axisMode == AxisMode.none) {
-        final invMatrix = v.Matrix4.inverted(rotMatrix);
-        final deltaView = v.Vector3(screenDelta.dx, screenDelta.dy, 0);
-        final worldMove = invMatrix.transform3(deltaView);
-        worldMove.scale(1.0 / scaleFactor);
-        worldDelta = worldMove;
+        // --- NEW: Camera-Relative Movement ---
+        // Calculate Camera Right and Down vectors in World Space based on rotation
+
+        double cosY = cos(_rotationY);
+        double sinY = sin(_rotationY);
+        double cosX = cos(_rotationX);
+        double sinX = sin(_rotationX);
+
+        // Screen Right (X+) corresponds to this world vector:
+        v.Vector3 camRight = v.Vector3(cosY, 0, -sinY);
+
+        // Screen Down (Y+) corresponds to this world vector:
+        // (Note: Screen Y is Down, so we calculate the vector that maps to Y+)
+        v.Vector3 camDown = v.Vector3(
+          -sinY * sinX,
+          cosX,
+          -cosY * sinX
+        );
+
+        worldDelta = (camRight * screenDelta.dx + camDown * screenDelta.dy) / scaleFactor;
+
       } else {
         worldDelta = _calculateAxisConstrainedDelta(screenDelta, scaleFactor, rotMatrix);
       }
@@ -393,9 +409,9 @@ class _StickmanPoseEditorState extends State<StickmanPoseEditor> {
     v.Vector3? pole;
     // Check ID to determine pole
     if (jointNode.id.contains('Knee')) {
-       pole = v.Vector3(0, 0, -1); // Knee Backward (-Z) [MODIFIED]
+       pole = v.Vector3(0, 0, -1); // Knee Backward (-Z)
     } else if (jointNode.id.contains('Elbow')) {
-       pole = v.Vector3(0, 0, 1); // Elbow Forward (+Z) [MODIFIED]
+       pole = v.Vector3(0, 0, 1); // Elbow Forward (+Z)
     }
 
     if (pole != null) {
