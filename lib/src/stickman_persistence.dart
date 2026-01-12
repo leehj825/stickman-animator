@@ -20,7 +20,6 @@ class StickmanProjectData {
 class StickmanPersistence {
 
   /// Saves the ENTIRE PROJECT (List of clips + Global Style) to a single JSON file (extension: .sap).
-  /// Note: The grid and axis visualization settings are NOT saved. They are view-only features.
   static Future<void> saveProject(List<StickmanClip> clips, double headRadius, double strokeWidth) async {
     try {
       final projectMap = {
