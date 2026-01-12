@@ -359,53 +359,56 @@ class _StickmanPoseEditorState extends State<StickmanPoseEditor> {
       direction.normalize();
       targetPos = rootPos + (direction * (len1 + len2));
       distance = len1 + len2;
-    } else if (distance < (len1 - len2).abs()) {
-       // Too close?
     }
 
     // 2. Solve Angle for Joint
     // Law of cosines: c^2 = a^2 + b^2 - 2ab cos(C)
-    // We want angle at Root (A) to rotate the upper arm.
-    // Triangle sides: a=len1, b=distance, c=len2
-    // Angle alpha is opposite to c (len2).
     // cos(alpha) = (a^2 + b^2 - c^2) / (2ab)
     double cosAlpha = (len1 * len1 + distance * distance - len2 * len2) / (2 * len1 * distance);
     if (cosAlpha > 1.0) cosAlpha = 1.0;
     if (cosAlpha < -1.0) cosAlpha = -1.0;
     double alpha = acos(cosAlpha);
 
-    // 3. Determine Rotation Plane
-    // We use the old joint position to determine the "bend direction".
-    v.Vector3 oldVector = jointNode.position - rootPos;
-    v.Vector3 armAxis = direction.normalized(); // Axis from Root to Target
+    // 3. Determine Rotation Plane and Direction
+    // Use Pole Vectors to enforce anatomical constraints
 
-    // Calculate normal of the plane defined by Root, OldJoint, Target
-    v.Vector3 bendNormal = armAxis.cross(oldVector);
-    if (bendNormal.length < 0.001) {
-      // Gimbal lock or collinear: pick arbitrary axis (e.g. Z or Y)
-      bendNormal = armAxis.cross(v.Vector3(0, 0, 1));
+    v.Vector3 armAxis = direction.normalized();
+    v.Vector3 bendNormal;
+
+    v.Vector3? pole;
+    // Knee: Bends "Backward", meaning Knee Joint stays Forward (+Z)
+    if (jointNode.id.contains('Knee')) {
+      pole = v.Vector3(0, 0, 1);
+    }
+    // Elbow: Bends "Forward", meaning Elbow Joint stays Backward (-Z)
+    else if (jointNode.id.contains('Elbow')) {
+      pole = v.Vector3(0, 0, -1);
+    }
+
+    if (pole != null) {
+      // Create a normal perpendicular to the plane formed by Limb Axis and Pole.
+      // Rotating the straight limb around this normal will keep the joint in that plane.
+      bendNormal = armAxis.cross(pole);
       if (bendNormal.length < 0.001) {
+         // Fallback if limb is collinear with pole (e.g. perfectly straight forward)
+         // Default to side bend (X-axis)
          bendNormal = armAxis.cross(v.Vector3(1, 0, 0));
       }
+    } else {
+      // Fallback for non-standard limbs: Use previous frame to minimize spin
+      v.Vector3 oldVector = jointNode.position - rootPos;
+      bendNormal = armAxis.cross(oldVector);
     }
+
     bendNormal.normalize();
 
     // 4. Calculate New Joint Position
     // Rotate 'armAxis' by 'alpha' around 'bendNormal'
-    // Quaternion rotation
     v.Quaternion q = v.Quaternion.axisAngle(bendNormal, alpha);
     v.Vector3 upperArmVec = q.rotate(armAxis) * len1;
     v.Vector3 newJointPos = rootPos + upperArmVec;
 
     // 5. Update Nodes
-    // Move Joint
-    // Since 'jointNode' might have children (the effector), and we want to move the effector to targetPos explicitly...
-    // We should move Joint first, but we must be careful not to double-apply delta if we use recursive move?
-    // No, we set positions directly here.
-
-    // We update Joint position directly.
-    // NOTE: This assumes Joint has no OTHER children except the effector chain in this context.
-    // Stickman has simplified topology.
     jointNode.position.setFrom(newJointPos);
     effectorNode.position.setFrom(targetPos);
   }
