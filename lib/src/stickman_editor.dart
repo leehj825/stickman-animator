@@ -45,16 +45,10 @@ class _StickmanPoseEditorState extends State<StickmanPoseEditor> {
     super.initState();
     _refreshNodeCache();
     widget.controller.setStrategy(ManualMotionStrategy());
-    // We do NOT generate defaults here anymore.
-    // We wait until the first mode switch or we just initialize empty.
-    // If we init here, they won't have the user's custom pose if they edit it later.
-    // But to show something on first load, we can init defaults.
     _regenerateDefaultClips();
   }
 
   // --- FIX: REGENERATE DEFAULTS ---
-  // This ensures that "Run", "Jump", "Kick" always use the user's current
-  // limb lengths (Pose) when they enter Animate mode.
   void _regenerateDefaultClips() {
     final style = widget.controller.skeleton;
 
@@ -75,13 +69,8 @@ class _StickmanPoseEditorState extends State<StickmanPoseEditor> {
 
   void _switchMode(EditorMode mode) {
     if (mode == EditorMode.animate) {
-      // FIX: FORCE REGENERATE DEFAULTS from current Pose
-      // This applies the limb length/position changes to the animation.
       _regenerateDefaultClips();
-
-      // Also Sync style (Head radius/stroke)
       _syncProjectStyles();
-
       if (widget.controller.activeClip == null && _projectClips.isNotEmpty) {
         _activateClip(_projectClips.first);
       }
@@ -91,7 +80,6 @@ class _StickmanPoseEditorState extends State<StickmanPoseEditor> {
     });
   }
 
-  // Sync style settings (Line/Head) to the animation frames
   void _syncProjectStyles() {
     final currentStyle = widget.controller.skeleton;
     for (var clip in _projectClips) {
@@ -103,7 +91,7 @@ class _StickmanPoseEditorState extends State<StickmanPoseEditor> {
   }
 
   void _activateClip(StickmanClip clip) {
-    _syncProjectStyles(); // Ensure this clip is fresh style-wise
+    _syncProjectStyles();
     setState(() {
       widget.controller.activeClip = clip;
       widget.controller.currentFrameIndex = 0.0;
@@ -128,7 +116,6 @@ class _StickmanPoseEditorState extends State<StickmanPoseEditor> {
             onPressed: () {
               final name = textController.text.trim();
               if (name.isNotEmpty) {
-                // Generate using CURRENT RIG
                 final newClip = StickmanGenerator.generateEmpty(widget.controller.skeleton);
                 final finalClip = StickmanClip(
                   name: name,
@@ -180,21 +167,18 @@ class _StickmanPoseEditorState extends State<StickmanPoseEditor> {
     );
   }
 
+  // --- IMPROVED MANIPULATION LOGIC (IK/FK) ---
+
   void _updateBonePosition(String nodeId, Offset screenDelta) {
     if (!_nodes.containsKey(nodeId)) return;
-    final node = _nodes[nodeId]!;
-    widget.controller.lastModifiedBone = node.id;
+    widget.controller.lastModifiedBone = nodeId;
 
     final modelScale = widget.controller.scale;
     if (modelScale == 0) return;
     final scaleFactor = modelScale * _zoom;
 
-    void applyMove(v.Vector3 delta) {
-      node.position.add(delta);
-      if (widget.controller.mode == EditorMode.animate) {
-        widget.controller.saveCurrentPoseToFrame();
-      }
-    }
+    // 1. Calculate the requested delta in World Space
+    v.Vector3 worldDelta = v.Vector3.zero();
 
     if (_cameraView == CameraView.free) {
       final rotMatrix = v.Matrix4.identity()
@@ -206,43 +190,44 @@ class _StickmanPoseEditorState extends State<StickmanPoseEditor> {
         final deltaView = v.Vector3(screenDelta.dx, screenDelta.dy, 0);
         final worldMove = invMatrix.transform3(deltaView);
         worldMove.scale(1.0 / scaleFactor);
-        applyMove(worldMove);
+        worldDelta = worldMove;
       } else {
-        _applyAxisConstrainedMove(node, screenDelta, scaleFactor, rotMatrix);
-        if (widget.controller.mode == EditorMode.animate) {
-          widget.controller.saveCurrentPoseToFrame();
-        }
+        // Axis constrained logic for Free view
+        worldDelta = _calculateAxisConstrainedDelta(screenDelta, scaleFactor, rotMatrix);
       }
     } else {
+      // Orthographic views
       double dx = screenDelta.dx / scaleFactor;
       double dy = screenDelta.dy / scaleFactor;
-      v.Vector3 delta = v.Vector3.zero();
 
       if (_axisMode == AxisMode.none) {
-        if (_cameraView == CameraView.front) {
-          delta.setValues(dx, dy, 0);
-        } else if (_cameraView == CameraView.side) {
-          delta.setValues(0, dy, dx);
-        } else if (_cameraView == CameraView.top) {
-          delta.setValues(dx, 0, dy);
-        }
+        if (_cameraView == CameraView.front) worldDelta.setValues(dx, dy, 0);
+        else if (_cameraView == CameraView.side) worldDelta.setValues(0, dy, dx);
+        else if (_cameraView == CameraView.top) worldDelta.setValues(dx, 0, dy);
       } else {
+        // Axis constrained logic for Ortho views
         if (_cameraView == CameraView.front) {
-           if (_axisMode == AxisMode.x) delta.x = dx;
-           if (_axisMode == AxisMode.y) delta.y = dy;
+           if (_axisMode == AxisMode.x) worldDelta.x = dx;
+           if (_axisMode == AxisMode.y) worldDelta.y = dy;
         } else if (_cameraView == CameraView.side) {
-           if (_axisMode == AxisMode.z) delta.z = dx;
-           if (_axisMode == AxisMode.y) delta.y = dy;
+           if (_axisMode == AxisMode.z) worldDelta.z = dx;
+           if (_axisMode == AxisMode.y) worldDelta.y = dy;
         } else if (_cameraView == CameraView.top) {
-           if (_axisMode == AxisMode.x) delta.x = dx;
-           if (_axisMode == AxisMode.z) delta.z = dy;
+           if (_axisMode == AxisMode.x) worldDelta.x = dx;
+           if (_axisMode == AxisMode.z) worldDelta.z = dy;
         }
       }
-      applyMove(delta);
+    }
+
+    // 2. Apply Logic based on Node Type (IK vs FK)
+    _applySmartMove(nodeId, worldDelta);
+
+    if (widget.controller.mode == EditorMode.animate) {
+      widget.controller.saveCurrentPoseToFrame();
     }
   }
 
-  void _applyAxisConstrainedMove(StickmanNode node, Offset screenDelta, double scaleFactor, v.Matrix4 rotMatrix) {
+  v.Vector3 _calculateAxisConstrainedDelta(Offset screenDelta, double scaleFactor, v.Matrix4 rotMatrix) {
       v.Vector3 axisDir;
       if (_axisMode == AxisMode.x) axisDir = v.Vector3(1, 0, 0);
       else if (_axisMode == AxisMode.y) axisDir = v.Vector3(0, 1, 0);
@@ -251,12 +236,178 @@ class _StickmanPoseEditorState extends State<StickmanPoseEditor> {
       final viewAxis = rotMatrix.transform3(axisDir.clone());
       final screenAxisDir = Offset(viewAxis.x, viewAxis.y);
       double screenMag = screenAxisDir.distance;
-      if (screenMag < 0.001) return;
+      if (screenMag < 0.001) return v.Vector3.zero();
 
       final screenAxisUnit = screenAxisDir / screenMag;
       double projection = screenDelta.dx * screenAxisUnit.dx + screenDelta.dy * screenAxisUnit.dy;
-      double worldMove = projection / (scaleFactor * screenMag);
-      node.position.add(axisDir * worldMove);
+      double worldMoveAmount = projection / (scaleFactor * screenMag);
+      return axisDir * worldMoveAmount;
+  }
+
+  void _applySmartMove(String nodeId, v.Vector3 delta) {
+    if (delta.length == 0) return;
+
+    // Classification
+    bool isEndEffector = ['lHand', 'rHand', 'lFoot', 'rFoot'].contains(nodeId);
+    bool isMidJoint = ['lElbow', 'rElbow', 'lKnee', 'rKnee'].contains(nodeId);
+    bool isRoot = nodeId == 'hip';
+    bool isNeck = nodeId == 'neck';
+
+    if (isRoot) {
+      // Move EVERYTHING
+      _recursiveMove(_nodes['hip']!, delta);
+    } else if (isNeck) {
+      // Constrained Move of Neck (FK), carries Head and Arms
+      _applyConstrainedFKMove(nodeId, 'hip', delta);
+    } else if (isMidJoint) {
+      // Constrained Move of Joint (FK), carries End Effector
+      String parentId = _getParentId(nodeId);
+      if (parentId.isNotEmpty) {
+        _applyConstrainedFKMove(nodeId, parentId, delta);
+      }
+    } else if (isEndEffector) {
+      // IK Move
+      _applyIKMove(nodeId, delta);
+    } else {
+      // Default (e.g. Head): Standard FK (move self + children)
+      if (_nodes.containsKey(nodeId)) {
+        _recursiveMove(_nodes[nodeId]!, delta);
+      }
+    }
+  }
+
+  String _getParentId(String nodeId) {
+    if (nodeId == 'lElbow' || nodeId == 'rElbow') return 'neck';
+    if (nodeId == 'lKnee' || nodeId == 'rKnee') return 'hip';
+    if (nodeId == 'lHand') return 'lElbow';
+    if (nodeId == 'rHand') return 'rElbow';
+    if (nodeId == 'lFoot') return 'lKnee';
+    if (nodeId == 'rFoot') return 'rKnee';
+    if (nodeId == 'neck') return 'hip';
+    if (nodeId == 'head') return 'neck';
+    return '';
+  }
+
+  // Moves node and all children by delta
+  void _recursiveMove(StickmanNode node, v.Vector3 delta) {
+    node.position.add(delta);
+    for (var child in node.children) {
+      _recursiveMove(child, delta);
+    }
+  }
+
+  // Moves node by delta, but constrains it to maintain distance from parent.
+  // Then moves all children by the *constrained* delta (Rigid limb).
+  void _applyConstrainedFKMove(String nodeId, String parentId, v.Vector3 requestedDelta) {
+    final node = _nodes[nodeId]!;
+    final parent = _nodes[parentId]!;
+
+    // 1. Calculate intended new position
+    v.Vector3 oldPos = node.position.clone();
+    v.Vector3 targetPos = oldPos + requestedDelta;
+
+    // 2. Constrain to radius from parent
+    double currentLength = oldPos.distanceTo(parent.position);
+    v.Vector3 dir = targetPos - parent.position;
+    double newLen = dir.length;
+
+    v.Vector3 constrainedPos;
+    if (newLen > 0.001) {
+      dir.normalize();
+      constrainedPos = parent.position + (dir * currentLength);
+    } else {
+      constrainedPos = oldPos; // Degenerate case
+    }
+
+    // 3. Calculate effective delta
+    v.Vector3 effectiveDelta = constrainedPos - oldPos;
+
+    // 4. Apply to subtree (Node + Children)
+    _recursiveMove(node, effectiveDelta);
+  }
+
+  // Solves 2-Bone IK for End Effector
+  void _applyIKMove(String effectorId, v.Vector3 delta) {
+    final effector = _nodes[effectorId]!;
+
+    // Identify chain
+    String jointId = _getParentId(effectorId);
+    if (jointId.isEmpty) return;
+    final joint = _nodes[jointId]!;
+
+    String rootId = _getParentId(jointId);
+    if (rootId.isEmpty) return;
+    final root = _nodes[rootId]!;
+
+    // Lengths
+    double lenUpper = joint.position.distanceTo(root.position);
+    double lenLower = effector.position.distanceTo(joint.position);
+
+    // Target
+    v.Vector3 targetEffectorPos = effector.position + delta;
+
+    // IK Solver
+    _solveTwoBoneIK(root.position, joint, effector, targetEffectorPos, lenUpper, lenLower);
+  }
+
+  void _solveTwoBoneIK(v.Vector3 rootPos, StickmanNode jointNode, StickmanNode effectorNode, v.Vector3 targetPos, double len1, double len2) {
+    v.Vector3 direction = targetPos - rootPos;
+    double distance = direction.length;
+
+    // 1. Clamp Target if out of reach
+    if (distance > (len1 + len2)) {
+      direction.normalize();
+      targetPos = rootPos + (direction * (len1 + len2));
+      distance = len1 + len2;
+    } else if (distance < (len1 - len2).abs()) {
+       // Too close?
+    }
+
+    // 2. Solve Angle for Joint
+    // Law of cosines: c^2 = a^2 + b^2 - 2ab cos(C)
+    // We want angle at Root (A) to rotate the upper arm.
+    // Triangle sides: a=len1, b=distance, c=len2
+    // Angle alpha is opposite to c (len2).
+    // cos(alpha) = (a^2 + b^2 - c^2) / (2ab)
+    double cosAlpha = (len1 * len1 + distance * distance - len2 * len2) / (2 * len1 * distance);
+    if (cosAlpha > 1.0) cosAlpha = 1.0;
+    if (cosAlpha < -1.0) cosAlpha = -1.0;
+    double alpha = acos(cosAlpha);
+
+    // 3. Determine Rotation Plane
+    // We use the old joint position to determine the "bend direction".
+    v.Vector3 oldVector = jointNode.position - rootPos;
+    v.Vector3 armAxis = direction.normalized(); // Axis from Root to Target
+
+    // Calculate normal of the plane defined by Root, OldJoint, Target
+    v.Vector3 bendNormal = armAxis.cross(oldVector);
+    if (bendNormal.length < 0.001) {
+      // Gimbal lock or collinear: pick arbitrary axis (e.g. Z or Y)
+      bendNormal = armAxis.cross(v.Vector3(0, 0, 1));
+      if (bendNormal.length < 0.001) {
+         bendNormal = armAxis.cross(v.Vector3(1, 0, 0));
+      }
+    }
+    bendNormal.normalize();
+
+    // 4. Calculate New Joint Position
+    // Rotate 'armAxis' by 'alpha' around 'bendNormal'
+    // Quaternion rotation
+    v.Quaternion q = v.Quaternion.axisAngle(bendNormal, alpha);
+    v.Vector3 upperArmVec = q.rotate(armAxis) * len1;
+    v.Vector3 newJointPos = rootPos + upperArmVec;
+
+    // 5. Update Nodes
+    // Move Joint
+    // Since 'jointNode' might have children (the effector), and we want to move the effector to targetPos explicitly...
+    // We should move Joint first, but we must be careful not to double-apply delta if we use recursive move?
+    // No, we set positions directly here.
+
+    // We update Joint position directly.
+    // NOTE: This assumes Joint has no OTHER children except the effector chain in this context.
+    // Stickman has simplified topology.
+    jointNode.position.setFrom(newJointPos);
+    effectorNode.position.setFrom(targetPos);
   }
 
   @override
