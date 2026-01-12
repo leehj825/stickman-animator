@@ -138,12 +138,6 @@ class StickmanPainter extends CustomPainter {
 
       for (var child in node.children) {
          final end = toScreen(child.position);
-
-         // New Topology Logic: Direct Lines (Neck->Elbow, Hip->Knee)
-         // This is handled automatically by the hierarchy traversal
-         // because the children list now reflects the new topology.
-         // e.g., Neck children includes Elbows.
-
          canvas.drawLine(start, end, paint);
          drawNode(child);
       }
@@ -152,10 +146,34 @@ class StickmanPainter extends CustomPainter {
     // Draw Bones
     drawNode(skel.root);
 
-    // Legacy Support
+    // Legacy Support (if head node missing)
     if (!skel.nodes.containsKey('head') && skel.nodes.containsKey('neck')) {
       Offset headCenter = toScreen(skel.neck + v.Vector3(0, -8, 0));
       canvas.drawCircle(headCenter, headRadius, fillPaint);
+    }
+
+    // --- NEW: Draw Face Direction Indicator ---
+    if (skel.nodes.containsKey('head')) {
+      final headPos = skel.nodes['head']!.position;
+
+      // Calculate a point in front of the head (+Z axis)
+      // We make the line length proportional to the head radius so it looks good at any scale
+      double indLength = skel.headRadius * 2.5;
+      if (indLength < 15.0) indLength = 15.0; // Minimum length
+
+      final frontPos = headPos + v.Vector3(0, 0, indLength);
+
+      final start = toScreen(headPos);
+      final end = toScreen(frontPos);
+
+      final indPaint = Paint()
+        ..color = Colors.cyanAccent.withOpacity(0.8)
+        ..strokeWidth = 2.0
+        ..style = PaintingStyle.stroke;
+
+      canvas.drawLine(start, end, indPaint);
+      // Draw a small dot at the tip
+      canvas.drawCircle(end, 2.0, Paint()..color = Colors.cyanAccent);
     }
 
     // Draw Axis Constraints
@@ -259,13 +277,6 @@ class StickmanPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant StickmanPainter oldDelegate) {
-    // Add check for style properties changes if they are not deeply checked
-    // The controller is the same instance usually, but skeleton props might change.
-    // controller.skeleton is mutable. We rely on the parent (Editor) calling setState()
-    // to trigger this build, and CustomPainter will repaint if shouldRepaint returns true.
-    // Since we pass controller, we should assume it might have changed internally.
-    // Just returning true or checking params is standard.
-    // However, for optimization we check fields.
     return oldDelegate.cameraView != cameraView ||
            oldDelegate.viewRotationX != viewRotationX ||
            oldDelegate.viewRotationY != viewRotationY ||
