@@ -1,3 +1,4 @@
+import 'dart:convert'; // Added for jsonDecode
 import 'dart:io';
 import 'dart:math';
 import 'package:flutter/material.dart';
@@ -48,7 +49,54 @@ class _StickmanPoseEditorState extends State<StickmanPoseEditor> {
     super.initState();
     _refreshNodeCache();
     widget.controller.setStrategy(ManualMotionStrategy());
-    _regenerateDefaultClips();
+
+    // CHANGED: Load from asset instead of generating procedural defaults directly
+    _loadDefaultAsset();
+  }
+
+  /// NEW: Loads the hardcoded SAP file from assets
+  Future<void> _loadDefaultAsset() async {
+    try {
+      // 1. Load the file (Ensure 'assets/combined_animation.sap' is in pubspec.yaml)
+      final jsonString = await rootBundle.loadString('assets/combined_animation.sap');
+      final jsonMap = jsonDecode(jsonString);
+
+      // 2. Parse Clips
+      List<StickmanClip> loadedClips = [];
+      if (jsonMap is Map<String, dynamic>) {
+        if (jsonMap.containsKey('clips')) {
+          loadedClips = (jsonMap['clips'] as List)
+              .map((c) => StickmanClip.fromJson(c))
+              .toList();
+        } else if (jsonMap.containsKey('keyframes')) {
+          loadedClips = [StickmanClip.fromJson(jsonMap)];
+        }
+
+        // 3. Optional: Apply Global Style from file
+        if (jsonMap.containsKey('headRadius')) {
+           widget.controller.skeleton.headRadius = (jsonMap['headRadius'] as num).toDouble();
+        }
+        if (jsonMap.containsKey('strokeWidth')) {
+           widget.controller.skeleton.strokeWidth = (jsonMap['strokeWidth'] as num).toDouble();
+        }
+      }
+
+      // 4. Update UI
+      if (mounted && loadedClips.isNotEmpty) {
+        setState(() {
+          _projectClips = loadedClips;
+          // Automatically enter Animate mode and play the first clip
+          _switchMode(EditorMode.animate);
+          _activateClip(_projectClips.first);
+        });
+      } else {
+        // Fallback if file empty
+        _regenerateDefaultClips();
+      }
+    } catch (e) {
+      debugPrint("Could not load default asset (using defaults): $e");
+      _regenerateDefaultClips(); // Fallback to procedural if asset fails
+    }
   }
 
   void _regenerateDefaultClips() {
@@ -82,16 +130,9 @@ class _StickmanPoseEditorState extends State<StickmanPoseEditor> {
               Navigator.pop(ctx);
               setState(() {
                 widget.controller.skeleton.lerp(StickmanSkeleton(), 1.0);
-                _regenerateDefaultClips();
+                // Reload the asset on reset, or fallback to procedural
+                _loadDefaultAsset();
                 _selectedNodeId = null;
-                if (widget.controller.activeClip != null) {
-                   final activeName = widget.controller.activeClip!.name;
-                   final reloaded = _projectClips.firstWhere(
-                     (c) => c.name == activeName,
-                     orElse: () => _projectClips.first
-                   );
-                   widget.controller.activeClip = reloaded;
-                }
               });
               ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Reset Complete")));
             },
@@ -104,7 +145,10 @@ class _StickmanPoseEditorState extends State<StickmanPoseEditor> {
 
   void _switchMode(EditorMode mode) {
     if (mode == EditorMode.animate) {
-      _regenerateDefaultClips();
+      // Don't regenerate defaults if we already have clips (from file)
+      if (_projectClips.isEmpty) {
+         _regenerateDefaultClips();
+      }
       _syncProjectStyles();
       if (widget.controller.activeClip == null && _projectClips.isNotEmpty) {
         _activateClip(_projectClips.first);
@@ -321,9 +365,10 @@ class _StickmanPoseEditorState extends State<StickmanPoseEditor> {
       else if (_cameraView == CameraView.top) worldDelta.setValues(dx, 0, dy);
     }
 
-    if (_axisMode == AxisMode.x) worldDelta.setValues(worldDelta.x, 0, 0);
-    else if (_axisMode == AxisMode.y) worldDelta.setValues(0, worldDelta.y, 0);
-    else if (_axisMode == AxisMode.z) worldDelta.setValues(0, 0, worldDelta.z);
+    // Apply Axis Constraint
+    if (_axisMode == AxisMode.x) { worldDelta.y = 0; worldDelta.z = 0; }
+    if (_axisMode == AxisMode.y) { worldDelta.x = 0; worldDelta.z = 0; }
+    if (_axisMode == AxisMode.z) { worldDelta.x = 0; worldDelta.y = 0; }
 
     _applySmartMove(nodeId, worldDelta);
 
